@@ -22,6 +22,7 @@
 #include "ufcs_event.h"
 #include "ufcs_msg.h"
 #include "ufcs_sha256.h"
+#include "ufcs_intf.h"
 
 #define HANDSHAKE_RETRY_MAX	3
 
@@ -215,7 +216,7 @@ static void ufcs_state_idel_handle(struct ufcs_class *class, struct ufcs_event *
 
 	return;
 err:
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 }
 
 static void ufcs_state_soft_reset_handle(struct ufcs_class *class, struct ufcs_event *event)
@@ -245,7 +246,7 @@ static void ufcs_state_send_exit_handle(struct ufcs_class *class, struct ufcs_ev
 	complete(&class->request_ack);
 	return;
 err:
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 }
 
 static void ufcs_state_recv_exit_handle(struct ufcs_class *class, struct ufcs_event *event)
@@ -331,7 +332,7 @@ re_recv:
 
 err:
 	ufcs_free_event(class, &event);
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 }
 
 static void ufcs_state_output_cap_handle(struct ufcs_class *class, struct ufcs_event *event)
@@ -420,7 +421,7 @@ re_recv:
 err:
 	stop_sender_response_timer(class);
 	ufcs_free_event(class, &event);
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 	return;
 exit:
 	stop_sender_response_timer(class);
@@ -532,7 +533,7 @@ err:
 	stop_sender_response_timer(class);
 	stop_power_supply_timer(class);
 	ufcs_free_event(class, &event);
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 	return;
 exit:
 	stop_sender_response_timer(class);
@@ -621,7 +622,7 @@ re_recv:
 err:
 	stop_sender_response_timer(class);
 	ufcs_free_event(class, &event);
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 	return;
 exit:
 	stop_sender_response_timer(class);
@@ -740,7 +741,7 @@ static void ufcs_state_get_cable_info_handle(struct ufcs_class *class, struct uf
 	return;
 
 err:
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 }
 
 static void ufcs_state_get_dev_info_handle(struct ufcs_class *class, struct ufcs_event *event)
@@ -827,7 +828,7 @@ re_recv:
 err:
 	stop_sender_response_timer(class);
 	ufcs_free_event(class, &event);
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 	return;
 exit:
 	stop_sender_response_timer(class);
@@ -915,7 +916,7 @@ re_recv:
 err:
 	stop_sender_response_timer(class);
 	ufcs_free_event(class, &event);
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 	return;
 exit:
 	stop_sender_response_timer(class);
@@ -1044,7 +1045,7 @@ re_recv:
 err:
 	stop_sender_response_timer(class);
 	ufcs_free_event(class, &event);
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 	return;
 exit:
 	stop_sender_response_timer(class);
@@ -1202,7 +1203,7 @@ err:
 	stop_sender_response_timer(class);
 	stop_wait_msg_timer(class);
 	ufcs_free_event(class, &event);
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 	return;
 exit:
 	stop_sender_response_timer(class);
@@ -1256,7 +1257,7 @@ static void ufcs_state_get_emark_info_handle(struct ufcs_class *class, struct uf
 	return;
 
 err:
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 }
 
 static void ufcs_state_get_power_info_handle(struct ufcs_class *class, struct ufcs_event *event)
@@ -1282,7 +1283,7 @@ static void ufcs_state_get_power_info_handle(struct ufcs_class *class, struct uf
 	return;
 
 err:
-	ufcs_source_hard_reset(class->ufcs);
+	ufcs_source_hard_reset(class);
 }
 
 static void ufcs_state_test_request_handle(struct ufcs_class *class, struct ufcs_event *event)

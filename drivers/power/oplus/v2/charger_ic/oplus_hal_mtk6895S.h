@@ -317,6 +317,7 @@ struct mtk_charger {
 #ifdef OPLUS_FEATURE_CHG_BASIC
 	struct oplus_chg_ic_dev *ic_dev;
 	struct oplus_chg_ic_dev *gauge_ic_dev;
+	struct oplus_chg_ic_dev *pps_ic;
 	bool wls_boost_soft_start;
 	int wls_set_boost_vol;
 	struct oplus_mms *gauge_topic;

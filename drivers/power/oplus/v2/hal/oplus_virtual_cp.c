@@ -49,9 +49,11 @@ struct oplus_virtual_cp_child {
 struct oplus_virtual_cp_ic {
 	struct device *dev;
 	struct oplus_chg_ic_dev *ic_dev;
+	struct device_node *active_node;
 	bool online;
 	enum oplus_chg_ic_connect_type connect_type;
 	int child_num;
+
 	struct oplus_virtual_cp_child *child_list;
 
 	/* parallel charge */
@@ -60,6 +62,41 @@ struct oplus_virtual_cp_ic {
 
 	bool reg_proc_node;
 };
+
+static struct device_node *oplus_vc_find_ic_root_node(struct device_node *root, const char *name)
+{
+	const char *tmp;
+	struct device_node *child;
+	int rc;
+	int i;
+
+	rc = of_property_count_elems_of_size(root, "oplus,cp_ic", sizeof(u32));
+	if (rc < 0) {
+		chg_err("can't get cp ic number, rc=%d\n", rc);
+		return NULL;
+	}
+
+	for (i = 0; i < rc; i++) {
+		tmp = of_get_oplus_chg_ic_name(root, "oplus,cp_ic", i);
+		if (strcmp(tmp, name) == 0)
+			return root;
+	}
+
+	for_each_child_of_node(root, child) {
+		rc = of_property_count_elems_of_size(child, "oplus,cp_ic", sizeof(u32));
+		if (rc < 0) {
+			chg_err("can't get cp ic number, rc=%d\n", rc);
+			continue;
+		}
+		for (i = 0; i < rc; i++) {
+			tmp = of_get_oplus_chg_ic_name(child, "oplus,cp_ic", i);
+			if (strcmp(tmp, name) == 0)
+				return child;
+		}
+	}
+
+	return NULL;
+}
 
 static void oplus_vc_online_handler(struct oplus_chg_ic_dev *ic_dev, void *virq_data)
 {
@@ -83,21 +120,34 @@ static void oplus_vc_err_handler(struct oplus_chg_ic_dev *ic_dev, void *virq_dat
 
 static int oplus_vc_base_virq_register(struct oplus_virtual_cp_ic *chip, int index)
 {
-	int rc;
+	int rc = 0;
+	struct oplus_chg_ic_dev *ic_dev = NULL;
+	void *virq_data = NULL;
 
-	rc = oplus_chg_ic_virq_register(chip->child_list[index].ic_dev,
-			OPLUS_IC_VIRQ_ONLINE, oplus_vc_online_handler, &chip->child_list[index]);
+	ic_dev = chip->child_list[index].ic_dev;
+	virq_data = &chip->child_list[index];
+	if (ic_dev == NULL) {
+		chg_err("ic_dev is NULL");
+		return -ENODEV;
+	}
+
+	chg_info(" index %d virq register %s start!\n", index, ic_dev->name);
+
+	rc = oplus_chg_ic_virq_register(ic_dev,
+			OPLUS_IC_VIRQ_ONLINE, oplus_vc_online_handler, virq_data);
 	if (rc < 0)
 		chg_err("register OPLUS_IC_VIRQ_ONLINE error, rc=%d", rc);
-	rc = oplus_chg_ic_virq_register(chip->child_list[index].ic_dev,
-			OPLUS_IC_VIRQ_OFFLINE, oplus_vc_offline_handler, &chip->child_list[index]);
+	rc = oplus_chg_ic_virq_register(ic_dev,
+			OPLUS_IC_VIRQ_OFFLINE, oplus_vc_offline_handler, virq_data);
 	if (rc < 0)
 		chg_err("register OPLUS_IC_VIRQ_ONLINE error, rc=%d", rc);
-	rc = oplus_chg_ic_virq_register(chip->child_list[index].ic_dev,
+	rc = oplus_chg_ic_virq_register(ic_dev,
 		OPLUS_IC_VIRQ_ERR, oplus_vc_err_handler, chip);
 	if (rc < 0 && rc != -ENOTSUPP)
 		chg_err("register OPLUS_IC_VIRQ_ERR error, rc=%d", rc);
-	chg_info("%s virq register success\n", chip->child_list[index].ic_dev->name);
+
+	if (ic_dev->name)
+		chg_info("%s virq register success\n", ic_dev->name);
 
 	return 0;
 }
@@ -138,7 +188,9 @@ static void oplus_vc_child_reg_callback(struct oplus_chg_ic_dev *ic, void *data,
 	struct oplus_virtual_cp_child *child;
 	struct oplus_chg_ic_dev *parent;
 	struct oplus_virtual_cp_ic *chip;
+	struct device_node *node;
 	int rc;
+	int i;
 
 	if (ic == NULL) {
 		chg_err("ic is NULL\n");
@@ -153,10 +205,30 @@ static void oplus_vc_child_reg_callback(struct oplus_chg_ic_dev *ic, void *data,
 	chip = oplus_chg_ic_get_drvdata(parent);
 
 	if (timeout) {
+		chg_info("timeout");
+		if (chip->active_node != NULL)
+			return;
+
 		if (chip->main_cp == child->index) {
 			/* TODO: Add the main cp switching function after IC registration timeout */
 		}
 		return;
+	}
+
+	node = oplus_vc_find_ic_root_node(chip->dev->of_node, ic->name);
+	WARN_ON(node == NULL);
+	chip->active_node = node;
+
+	for (i = 0; i < chip->child_num; i++) {
+		if (&chip->child_list[i] != child)
+			continue;
+		rc = of_property_read_u32_index(
+			node, "oplus,input_curr_max_ma", i,
+			&child->max_curr_ma);
+		if (rc < 0) {
+			chg_err("can't read ic[%d] oplus,input_curr_max_ma, rc=%d\n", i, rc);
+			return;
+		}
 	}
 
 	child->ic_dev = ic;
@@ -168,25 +240,38 @@ static void oplus_vc_child_reg_callback(struct oplus_chg_ic_dev *ic, void *data,
 		return;
 	}
 
+	chg_info("ic->name %s online = %d main_cp = %d, index = %d",
+		  ic->name, parent->online, chip->main_cp, child->index);
 	if (!parent->online && child->index == chip->main_cp) {
-		parent->online = true;
-		oplus_chg_ic_func(child->parent, OPLUS_IC_FUNC_INIT);
+		rc = oplus_chg_ic_func(child->parent, OPLUS_IC_FUNC_INIT);
+		if (rc < 0) {
+			parent->online = false;
+			chg_err("ic->name %s, main_cp = %d, index = %d rc = %d init failed, set online as false",
+				 ic->name, chip->main_cp, child->index, rc);
+		} else {
+			chg_info("ic->name %s online = %d main_cp = %d, index = %d init success, set online.",
+				  ic->name, parent->online, chip->main_cp, child->index);
+			parent->online = true;
+		}
 	}
 }
 
 static int oplus_vc_child_init(struct oplus_virtual_cp_ic *chip)
 {
 	struct device_node *node = chip->dev->of_node;
-	int i;
+	int i = 0;
 	int rc = 0;
 	const char *name;
+	struct device_node *child;
 
+	chip->active_node = NULL;
 	rc = of_property_read_u32(node, "oplus,cp_ic_connect",
 				  &chip->connect_type);
 	if (rc < 0) {
 		chg_err("can't get cp ic connect type, rc=%d\n", rc);
 		return rc;
 	}
+
 	chip->main_cp = 0;
 	rc = of_property_count_elems_of_size(node, "oplus,cp_ic",
 					     sizeof(u32));
@@ -206,20 +291,21 @@ static int oplus_vc_child_init(struct oplus_virtual_cp_ic *chip)
 	}
 
 	for (i = 0; i < chip->child_num; i++) {
-		rc = of_property_read_u32_index(
-			node, "oplus,input_curr_max_ma", i,
+		rc = of_property_read_u32_index(node,
+			"oplus,input_curr_max_ma", i,
 			&chip->child_list[i].max_curr_ma);
 		if (rc < 0) {
 			chg_err("can't read ic[%d] oplus,input_curr_max_ma, rc=%d\n", i, rc);
 			goto read_property_err;
 		}
-
 		chip->child_list[i].index = i;
 		chip->child_list[i].parent = chip->ic_dev;
 		INIT_WORK(&chip->child_list[i].online_work, oplus_vc_online_work);
 		INIT_WORK(&chip->child_list[i].offline_work, oplus_vc_offline_work);
 		name = of_get_oplus_chg_ic_name(node, "oplus,cp_ic", i);
-		rc = oplus_chg_ic_wait_ic_timeout(name, oplus_vc_child_reg_callback, &chip->child_list[i],
+		chg_info("name is %s, i = %d", name, i);
+		rc = oplus_chg_ic_wait_ic_timeout(name, oplus_vc_child_reg_callback,
+						  &chip->child_list[i],
 						  msecs_to_jiffies(CP_REG_TIMEOUT_MS));
 		if (rc < 0) {
 			chg_err("can't wait ic[%d](%s), rc=%d\n", i, name, rc);
@@ -227,6 +313,18 @@ static int oplus_vc_child_init(struct oplus_virtual_cp_ic *chip)
 		}
 	}
 
+	for_each_child_of_node(node, child) {
+		for (i = 0; i < chip->child_num; i++) {
+			name = of_get_oplus_chg_ic_name(child, "oplus,cp_ic", i);
+			chg_info("name is %s, i = %d", name, i);
+			rc = oplus_chg_ic_wait_ic_timeout(name, oplus_vc_child_reg_callback, &chip->child_list[i],
+							  msecs_to_jiffies(CP_REG_TIMEOUT_MS));
+			if (rc < 0) {
+				chg_err("can't wait ic[%d](%s), rc=%d\n", i, name, rc);
+				continue;
+			}
+		}
+	}
 	return 0;
 
 read_property_err:
@@ -265,7 +363,6 @@ static int oplus_chg_vc_exit(struct oplus_chg_ic_dev *ic_dev)
 
 	ic_dev->online = false;
 	oplus_chg_ic_virq_trigger(ic_dev, OPLUS_IC_VIRQ_OFFLINE);
-
 	chg_info("unregister success\n");
 	return 0;
 }
@@ -551,6 +648,7 @@ static int oplus_chg_vc_check_work_mode_support(struct oplus_chg_ic_dev *ic_dev,
 			}
 		} else if (vc->connect_type == OPLUS_CHG_IC_CONNECT_SERIAL) {
 			/* TODO */
+			chg_err("child ic[%d] check work mode not support because it is serial connect.\n", i);
 			return -ENOTSUPP;
 		} else {
 			chg_err("Unknown connect type\n");
@@ -1869,7 +1967,7 @@ static int oplus_virtual_cp_probe(struct platform_device *pdev)
 		goto child_init_err;
 	}
 
-	chg_err("probe success\n");
+	chg_info("probe success\n");
 	return 0;
 
 child_init_err:

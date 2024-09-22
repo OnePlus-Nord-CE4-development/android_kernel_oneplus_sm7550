@@ -267,7 +267,7 @@ static void oplus_monitor_charge_info_update_work(struct work_struct *work)
 		"WIRELESS[%d %d %d %d %d 0x%x %d %d], "
 		"VOOC[%d %d %d %d 0x%x], "
 		"UFCS[%d %d %d 0x%x], "
-		"COMMON[%d %d %d 0x%x %d %d]",
+		"COMMON[%d %d %d 0x%x %d]",
 		chip->batt_temp, chip->shell_temp, chip->vbat_mv,
 		chip->vbat_min_mv, chip->ibat_ma, chip->batt_soc, chip->ui_soc,
 		chip->smooth_soc, chip->batt_rm, chip->batt_fcc, chip->batt_exist,
@@ -285,7 +285,7 @@ static void oplus_monitor_charge_info_update_work(struct work_struct *work)
 		chip->ufcs_online, chip->ufcs_charging, chip->ufcs_oplus_adapter,
 		chip->ufcs_adapter_id,
 		chip->temp_region, chip->ffc_status, chip->cool_down,
-		chip->notify_code, chip->led_on, chip->deep_support);
+		chip->notify_code, chip->led_on);
 
 #ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 	if (get_eng_version() != PREVERSION || chip->wired_online || chip->wls_online) {
@@ -446,9 +446,6 @@ static void oplus_monitor_gauge_subs_callback(struct mms_subscribe *subs,
 		oplus_mms_get_item_data(chip->gauge_topic, GAUGE_ITEM_SOH, &data,
 					false);
 		chip->batt_soh = data.intval;
-		oplus_mms_get_item_data(chip->gauge_topic, GAUGE_ITEM_DEEP_SUPPORT,
-			&data, false);
-		chip->deep_support = data.intval;
 		schedule_work(&chip->charge_info_update_work);
 		break;
 	case MSG_TYPE_ITEM:
@@ -522,9 +519,6 @@ static void oplus_monitor_subscribe_gauge_topic(struct oplus_mms *topic,
 	oplus_mms_get_item_data(chip->gauge_topic, GAUGE_ITEM_ERR_CODE, &data,
 				true);
 	chip->batt_err_code = (unsigned int)data.intval;
-	oplus_mms_get_item_data(chip->gauge_topic, GAUGE_ITEM_DEEP_SUPPORT,
-		&data, true);
-	chip->deep_support = data.intval;
 }
 
 static void oplus_monitor_ufcs_subs_callback(struct mms_subscribe *subs,
@@ -1208,16 +1202,6 @@ static struct mms_item oplus_monitor_item[] = {
 	{
 		.desc = {
 			.item_id = ERR_ITEM_UFCS,
-			.str_data = true,
-			.up_thr_enable = false,
-			.down_thr_enable = false,
-			.dead_thr_enable = false,
-			.update = NULL,
-		}
-	},
-	{
-		.desc = {
-			.item_id = ERR_ITEM_DEEP_DISCHG_INFO,
 			.str_data = true,
 			.up_thr_enable = false,
 			.down_thr_enable = false,

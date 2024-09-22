@@ -86,3 +86,7 @@ obj-$(CONFIG_OPLUS_GPIO) += oplus_gpio.o
 #ifdef OPLUS_FEATURE_CHG_BASIC
 obj-$(CONFIG_HAPTIC_FEEDBACK) += aw8697_haptic/
 #endif
+
+#ifdef CONFIG_OPLUS_SENSOR_CONSUMER_IR
+obj-$(CONFIG_OPLUS_SENSOR_CONSUMER_IR_CORE) += oplus_consumer_ir/
+#endif /* CONFIG_OPLUS_SENSOR_CONSUMER_IR */

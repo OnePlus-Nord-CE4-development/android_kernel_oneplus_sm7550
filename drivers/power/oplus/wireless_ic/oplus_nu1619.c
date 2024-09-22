@@ -1889,7 +1889,7 @@ void nu1619_set_rtx_function(bool is_on)
 
 		chg_err(" !!!!! <~WPC~> Disable rtx function!\n");
 		chip->nu1619_chg_status.trx_transfer_end_time = oplus_wpc_get_local_time_s();
-		chg_err("trx_online=%d, start_time=%d, end_time=%d, trx_usb_present_once\n",
+		chg_err("trx_online=%d, start_time=%d, end_time=%d, trx_usb_present_once=%d\n",
 			chip->nu1619_chg_status.tx_online,
 			chip->nu1619_chg_status.trx_transfer_start_time,
 			chip->nu1619_chg_status.trx_transfer_end_time,
@@ -11862,9 +11862,15 @@ static int nu1619_driver_probe(struct i2c_client *client, const struct i2c_devic
 
 static struct i2c_driver nu1619_i2c_driver;
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void nu1619_driver_remove(struct i2c_client *client)
+#else
 static int nu1619_driver_remove(struct i2c_client *client)
+#endif
 {
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
 	return 0;
+#endif
 }
 
 

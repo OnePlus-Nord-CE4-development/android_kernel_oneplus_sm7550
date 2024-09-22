@@ -279,6 +279,30 @@ static s32 sc8517_write_word(struct i2c_client *client, u8 reg, u16 val)
 	return 0;
 }
 
+static int sc8517_read_i2c_nonblock(struct i2c_client *client, u8 reg, u8 length, u8 *returnData)
+{
+	int rc = 0;
+	int retry = 3;
+
+	rc = i2c_smbus_read_i2c_block_data(client, reg, length, returnData);
+	if (rc < 0) {
+		while (retry > 0) {
+			usleep_range(5000, 5000);
+			rc = i2c_smbus_read_i2c_block_data(client, reg, length, returnData);
+			if (rc < 0)
+				retry--;
+			else
+				break;
+		}
+	}
+
+	if (rc < 0)
+		chg_err("read err, rc = %d,\n", rc);
+
+	return rc;
+}
+
+
 static int sc8517_read_i2c_block(struct i2c_client *client, u8 reg, u8 length, u8 *returnData)
 {
 	struct sc8517_device *chip;
@@ -292,7 +316,7 @@ static int sc8517_read_i2c_block(struct i2c_client *client, u8 reg, u8 length, u
 	}
 	chip = voocphy->priv_data;
 	if (chip == NULL) {
-		chg_err("sc8547a chip is NULL\n");
+		chg_err("chip is NULL\n");
 		return -ENODEV;
 	}
 
@@ -1190,7 +1214,6 @@ static int sc8517_cp_check_work_mode_support(struct oplus_chg_ic_dev *ic_dev, en
 		chg_err("oplus_chg_ic_dev is NULL");
 		return -ENODEV;
 	}
-
 	return sc8517_check_work_mode_support(mode);
 }
 
@@ -1346,9 +1369,11 @@ static int sc8517_cp_set_work_start(struct oplus_chg_ic_dev *ic_dev, bool start)
 		return -ENODEV;
 	}
 	chip = oplus_chg_ic_get_priv_data(ic_dev);
+	if (NULL == chip || NULL == chip->voocphy)
+		return -ENODEV;
 
-	chg_info("%s work %s\n", chip->dev->of_node->name, start ? "start" : "stop");
 	sc8517_read_byte(chip->voocphy->client, SC8517_REG_02, &data);
+	chg_info("%s work %s, data = 0x%x\n", chip->dev->of_node->name, start ? "start" : "stop", data);
 
 	if (start && data == DISENABLE_MOS) {
 		rc = sc8517_set_chg_enable(chip->voocphy, start);
@@ -1526,6 +1551,38 @@ static int sc8517_ic_register(struct sc8517_device *chip)
 	return 0;
 }
 
+static bool sc8517_check_device_is_exist(struct i2c_client *client)
+{
+	u8 reg[2] = { 0 };
+	int max_count = 5;
+	int ret = -1;
+
+	if (NULL == client) {
+		chg_err("client is null");
+		return false;
+	}
+
+        /* check if the ic is ok by read register */
+	while (max_count--) {
+		ret = sc8517_read_i2c_nonblock(client, 0x1c, 2, reg);
+		if (ret < 0) {
+			chg_err("count = %d read REG_1C 2 bytes failed(%d)\n", max_count, ret);
+			msleep(10);
+			continue;
+		} else {
+			break;
+		}
+	}
+
+	if (ret >= 0) {
+		chg_info(" CHIP_REV:0x%x, OTP_REV:0x%x", reg[0], reg[1]);
+		return true;
+	} else {
+		chg_err("device maybe not exist, ret = %d!", ret);
+		return false;
+	}
+}
+
 static int sc8517_charger_probe(struct i2c_client *client,
                                 const struct i2c_device_id *id)
 {
@@ -1534,6 +1591,10 @@ static int sc8517_charger_probe(struct i2c_client *client,
 	struct oplus_voocphy_manager *voocphy;
 
 	chg_info("start\n");
+	if (!sc8517_check_device_is_exist(client)) {
+		chg_err("sc8517 device is not exsit, not probe it!");
+		return 0;
+	}
 
 	chip = devm_kzalloc(&client->dev, sizeof(struct sc8517_device), GFP_KERNEL);
 	if (!chip) {
@@ -1560,6 +1621,7 @@ static int sc8517_charger_probe(struct i2c_client *client,
 
 	sc8517_create_device_node(&(client->dev));
 	voocphy->ops = &oplus_sc8517_ops;
+	sc8517_dump_registers(voocphy);
 	ret = oplus_register_voocphy(voocphy);
 	if (ret < 0) {
 		chg_err("failed to register voocphy, ret = %d", ret);
@@ -1577,16 +1639,23 @@ static int sc8517_charger_probe(struct i2c_client *client,
 		goto cp_reg_err;
 	}
 
-	register_voocphy_devinfo();
-	sc8517_cp_init(chip->cp_ic);
+	ret = sc8517_cp_init(chip->cp_ic);
+	if (ret < 0) {
+		chg_err("cp ic init error\n");
+		goto cp_init_err;
+	}
 	sc8517_dump_registers(voocphy);
-
+	register_voocphy_devinfo();
 	chg_info("sc8517(%s) probe successfully\n", chip->dev->of_node->name);
 
 	return 0;
 
+	chg_err("sc8517(%s) probe failed\n", chip->dev->of_node->name);
+cp_init_err:
 cp_reg_err:
+	free_irq(voocphy->irq, voocphy);
 reg_irq_err:
+	gpio_free(voocphy->irq_gpio);
 reg_voocphy_err:
 	devm_kfree(&client->dev, voocphy);
 chg_err:

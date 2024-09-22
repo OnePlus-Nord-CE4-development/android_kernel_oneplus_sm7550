@@ -127,6 +127,7 @@
 #define SYNA_GET_RATE_240                        10
 #define SYNA_GET_RATE_360                        300
 #define SYNA_GET_RATE_720                        600
+#define SYNA_GET_RATE_180                        180
 
 #define SYNA_WRITE_RATE_120                      120
 #define SYNA_WRITE_RATE_180                      180
@@ -140,6 +141,9 @@
 
 /*S3910 addr high bit is palm flag, 60*/
 #define PALM_FLAG       6
+
+#define GESTURE_MODE_SWITCH_RETRY_TIMES     5
+#define MAX_HEALTH_REPORT_LEN 50
 
 enum test_item_bit {
 	TYPE_TRX_SHORT          = 1,
@@ -263,6 +267,7 @@ enum dynamic_config_id {
 	DC_ENABLE_GLOVE,
 	DC_PS_STATUS = 0xC1,
 	DC_DISABLE_ESD = 0xC2,
+	DC_MOIS_MODE = 0xC7,
 	DC_FREQUENCE_HOPPING = 0xD2,
 	DC_TOUCH_HOLD = 0xD4,
 	DC_ERROR_PRIORITY = 0xD5,
@@ -368,6 +373,18 @@ enum flash_data {
 	LCM_DATA = 1,
 	OEM_DATA,
 	PPDT_DATA,
+};
+
+enum stretch_status {
+	EDGE_STRETCH_OFF = 0,
+	EDGE_STRETCH_RIGHT,
+	EDGE_STRETCH_LEFT,
+};
+
+enum mois_mode {
+	MOIS_DISABLED = 0,
+	MOIS_ENABLED = 1,
+	MOIS_FORCED = 2,
 };
 
 struct syna_tcm_buffer {
@@ -662,6 +679,13 @@ struct syna_tcm_data {
 	int extreme_game_report_rate;
 	bool extreme_game_flag;
 	bool high_resolution_support_x16;
+
+	unsigned int end_of_foreach;
+	/*device s3910*/
+	int pre_remaining_frames;
+	bool report_flag;
+	unsigned int offset;
+	unsigned int remaining_size;
 };
 
 struct device_hcd {

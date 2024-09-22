@@ -97,6 +97,7 @@ enum e_fastchg_version {
 	FASTCHG_VERSION_88W_SVOOC = 18,
 	FASTCHG_VERSION_55W_SVOOC = 19,
 	FASTCHG_VERSION_125W_SVOOC = 20,
+	FASTCHG_VERSION_45W_SVOOC = 21,
 	FASTCHG_VERSION_OTHER,
 };
 
@@ -452,7 +453,6 @@ bool oplus_vooc_wake_fastchg_work(struct oplus_vooc_chip *chip);
 void oplus_vooc_print_log(void);
 void oplus_vooc_switch_mode(int mode);
 bool oplus_vooc_get_allow_reading(void);
-void oplus_vooc_set_allow_reading(bool state);
 bool oplus_vooc_get_fastchg_started(void);
 bool oplus_vooc_get_fastchg_ing(void);
 bool oplus_vooc_get_fastchg_allow(void);

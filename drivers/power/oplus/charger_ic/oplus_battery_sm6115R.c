@@ -136,6 +136,11 @@ void __attribute__((weak)) splitchg_request_dpdm(struct sy697x *g_sy, bool enabl
 }
 #endif
 
+void oplus_chg_pps_get_source_cap(void)
+{
+	return;
+}
+
 void splitchg_request_dpdm(struct sy697x *chg, bool enable)
 {
 	int rc = 0;
@@ -617,17 +622,6 @@ int oplus_thermal_tmp_get_batt(void)
 	return 0;
 }
 EXPORT_SYMBOL(oplus_thermal_tmp_get_batt);
-
-int oplus_get_subboard_temp(void)
-{
-	int temp = 0;
-
-	temp = oplus_thermal_tmp_get_batt();
-	temp = temp / 100;
-
-	return temp;
-}
-EXPORT_SYMBOL(oplus_get_subboard_temp);
 
 int oplus_thermal_tmp_get_vbus_btb(void)
 {

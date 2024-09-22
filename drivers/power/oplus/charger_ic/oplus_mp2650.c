@@ -3466,14 +3466,20 @@ static int mp2650_driver_probe(struct i2c_client *client, const struct i2c_devic
 
 static struct i2c_driver mp2650_i2c_driver;
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void mp2650_driver_remove(struct i2c_client *client)
+#else
 static int mp2650_driver_remove(struct i2c_client *client)
+#endif
 {
 
     int ret=0;
 
     //ret = i2c_del_driver(&mp2650_i2c_driver);
     chg_debug( "  ret = %d\n", ret);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
     return 0;
+#endif
 }
 
 static unsigned long suspend_tm_sec = 0;

@@ -18,6 +18,7 @@
 #include <linux/completion.h>
 #include <linux/uaccess.h>
 #include <linux/fs.h>
+#include <linux/sched/clock.h>
 
 #include <oplus_chg.h>
 #include <oplus_chg_module.h>
@@ -33,6 +34,11 @@
 #include <oplus_chg_monitor.h>
 #include <oplus_chg_ufcs.h>
 #include <ufcs_class.h>
+#include "plat_ufcs/plat_ufcs_notify.h"
+
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+#include "oplus_cfg.h"
+#endif
 
 #define UFCS_MONITOR_CYCLE_MS		1500
 #define UFCS_WATCHDOG_TIME_MS		3000
@@ -62,6 +68,7 @@
 #define UFCS_BATT_CURR_TO_BCC_CURR	100
 
 #define UFCS_VERIFY_CURR_THR_MA		3000
+#define UFCS_BOOT_RETRY_TIME_MAX_SECOND		12
 
 enum {
 	UFCS_BAT_TEMP_NATURAL = 0,
@@ -138,6 +145,7 @@ struct oplus_ufcs_config {
 	unsigned int target_vbus_mv;
 	int curr_max_ma;
 	bool adsp_ufcs_project;
+	int ufcs_boot_time_retry;
 };
 
 struct oplus_ufcs_timer {
@@ -314,6 +322,10 @@ struct oplus_ufcs {
 
 	struct oplus_impedance_node *input_imp_node;
 	struct oplus_impedance_unit *imp_uint;
+
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+	struct oplus_cfg debug_cfg;
+#endif
 
 	struct oplus_ufcs_config config;
 	struct oplus_ufcs_timer timer;
@@ -1367,6 +1379,10 @@ static void oplus_ufcs_variables_init(struct oplus_ufcs *chip)
 
 static void oplus_ufcs_force_exit(struct oplus_ufcs *chip)
 {
+	chg_info("ufcs force exit!");
+
+	oplus_cpa_request_lock(chip->cpa_topic, UFCS_VOTER);
+	oplus_ufcs_set_online(chip, false);
 	oplus_ufcs_set_charging(chip, false);
 	oplus_ufcs_set_oplus_adapter(chip, false);
 	chip->cp_work_mode = CP_WORK_MODE_UNKNOWN;
@@ -1380,10 +1396,10 @@ static void oplus_ufcs_force_exit(struct oplus_ufcs *chip)
 	oplus_ufcs_switch_to_normal(chip);
 	oplus_cpa_switch_end(chip->cpa_topic, CHG_PROTOCOL_UFCS);
 	oplus_ufcs_set_adapter_id(chip, 0);
-	oplus_ufcs_set_online(chip, false);
 	vote(chip->ufcs_curr_votable, STEP_VOTER, false, 0, false);
 	if (is_wired_suspend_votable_available(chip))
 		vote(chip->wired_suspend_votable, UFCS_VOTER, false, 0, false);
+	oplus_cpa_request_unlock(chip->cpa_topic, UFCS_VOTER);
 }
 
 static void oplus_ufcs_soft_exit(struct oplus_ufcs *chip)
@@ -1597,6 +1613,17 @@ static int oplus_ufcs_deal_power_info(struct oplus_ufcs *chip)
 	return -EBUSY;
 }
 
+#define UFCS_LOCAL_T_NS_TO_S_THD		1000000000
+static int oplus_chg_ufcs_get_local_time_s(void)
+{
+	int local_time_s;
+
+	local_time_s = local_clock() / UFCS_LOCAL_T_NS_TO_S_THD;
+	chg_info("local_time_s:%d\n", local_time_s);
+
+	return local_time_s;
+}
+
 static void oplus_ufcs_switch_check_work(struct work_struct *work)
 {
 	struct delayed_work *dwork = to_delayed_work(work);
@@ -1608,6 +1635,7 @@ static void oplus_ufcs_switch_check_work(struct work_struct *work)
 	bool pdo_ok = false;
 	int max_curr = 0;
 	int pdo_vol;
+	bool ufcs_boot_retry = false;
 
 	oplus_ufcs_set_charging(chip, false);
 	oplus_cpa_switch_start(chip->cpa_topic, CHG_PROTOCOL_UFCS);
@@ -1628,6 +1656,11 @@ static void oplus_ufcs_switch_check_work(struct work_struct *work)
 	rc = oplus_ufcs_handshake(chip);
 	if (rc < 0) {
 		chg_err("ufcs handshake error\n");
+		/* check if the ufcs can be restarted when power off charger or reboot */
+		if (oplus_chg_ufcs_get_local_time_s() < chip->config.ufcs_boot_time_retry) {
+			chg_info("need retry to ufcs handshack when bootup handshack failed.\n");
+			ufcs_boot_retry = true;
+		}
 		goto err;
 	}
 	chg_info("ufcs handshake success\n");
@@ -1706,7 +1739,7 @@ static void oplus_ufcs_switch_check_work(struct work_struct *work)
 	for (i = 0; i < chip->pdo_num; i++) {
 		int target_vbus = chip->config.target_vbus_mv;
 		if (i > 0) {
-			if (UFCS_OUTPUT_MODE_VOL_MIN(chip->pdo[i]) !=
+			if (UFCS_OUTPUT_MODE_VOL_MIN(chip->pdo[i]) >
 			    UFCS_OUTPUT_MODE_VOL_MAX(chip->pdo[i - 1])) {
 				chg_err("the output voltage range is discontinuous\n");
 				break;
@@ -1779,7 +1812,14 @@ static void oplus_ufcs_switch_check_work(struct work_struct *work)
 err:
 	chg_err("error, ufcs exit\n");
 next:
-	oplus_ufcs_force_exit(chip);
+
+	if (ufcs_boot_retry) {
+		oplus_ufcs_soft_exit(chip);
+		chg_info("retry ufcs check \n");
+		schedule_delayed_work(&chip->switch_check_work, msecs_to_jiffies(2000));
+	} else {
+		oplus_ufcs_force_exit(chip);
+	}
 	return;
 
 exit:
@@ -1897,7 +1937,7 @@ static int oplus_ufcs_charge_start(struct oplus_ufcs *chip)
 			return UFCS_START_CHECK_DELAY_MS;
 		}
 		rc = oplus_ufcs_cp_enable(chip, true);
-		if (rc < 0) {
+		if (rc < 0 && (rc != -ENOTSUPP)) {
 			chg_err("set cp enable error, rc=%d\n", rc);
 			return rc;
 		}
@@ -2931,7 +2971,8 @@ static void oplus_ufcs_check_current_low(struct oplus_ufcs *chip)
 #define UFCS_CURR_LOW_LIMIT	500
 #define UFCS_CURR_LOW_CNT	3
 
-	if (UFCS_SOURCE_INFO_CURR(chip->src_info) > UFCS_CURR_LOW_LIMIT) {
+	if ((chip->src_info == 0) ||
+	    (UFCS_SOURCE_INFO_CURR(chip->src_info) > UFCS_CURR_LOW_LIMIT)) {
 		count = 0;
 		return;
 	}
@@ -3153,6 +3194,16 @@ static void oplus_ufcs_soft_exit_work(struct work_struct *work)
 
 static void oplus_ufcs_allow_recover_check(struct oplus_ufcs *chip)
 {
+	int rc;
+	union mms_msg_data data = { 0 };
+
+	rc = oplus_mms_get_item_data(chip->comm_topic, COMM_ITEM_SHELL_TEMP, &data, false);
+	if (rc < 0) {
+		chg_err("can't get shell temp data, rc=%d", rc);
+	} else {
+		chip->shell_temp = data.intval;
+	}
+
 	if (is_client_vote_enabled(chip->ufcs_not_allow_votable, BATT_TEMP_VOTER)) {
 		if (chip->shell_temp >= chip->limits.ufcs_low_temp &&
 		    chip->shell_temp <= chip->limits.ufcs_high_temp) {
@@ -4387,6 +4438,13 @@ static int oplus_ufcs_parse_dt(struct oplus_ufcs *chip)
 			chip->curr_table_type);
 	}
 
+	rc = of_property_read_u32(node, "oplus,ufcs_boot_time_retry",
+					 &config->ufcs_boot_time_retry);
+	if (rc < 0)
+		config->ufcs_boot_time_retry = 0;
+	if (config->ufcs_boot_time_retry > UFCS_BOOT_RETRY_TIME_MAX_SECOND)
+		config->ufcs_boot_time_retry = UFCS_BOOT_RETRY_TIME_MAX_SECOND;
+
 	(void)oplus_ufcs_parse_charge_strategy(chip);
 	(void)oplus_ufcs_parse_low_curr_full_curves(chip);
 
@@ -4720,6 +4778,41 @@ static int oplus_ufcs_notify_reg(struct oplus_ufcs *chip)
 	return 0;
 }
 
+static int oplus_plat_ufcs_event_notifier_call(struct notifier_block *nb, unsigned long val, void *v)
+{
+	struct oplus_ufcs *chip = container_of(nb, struct oplus_ufcs, nb);
+
+	switch (val) {
+	case PLAT_UFCS_NOTIFY_EXIT:
+		chg_info("exit ufcs\n");
+		oplus_ufcs_cp_set_work_start(chip, false);
+		break;
+	default:
+		chg_err("unknown event=%lu\n", val);
+		break;
+	}
+
+	return NOTIFY_OK;
+}
+
+static int oplus_plat_ufcs_notify_reg(struct oplus_ufcs *chip)
+{
+	int rc = 0;
+
+	chip->nb.notifier_call = oplus_plat_ufcs_event_notifier_call;
+	rc = plat_ufcs_reg_event_notifier(&chip->nb);
+	if (rc < 0) {
+		chg_err("register plat ufcs event notifier error, rc=%d\n", rc);
+		return rc;
+	}
+
+	return 0;
+}
+
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+#include "config/dynamic_cfg/oplus_ufcs_cfg.c"
+#endif
+
 static int oplus_ufcs_probe(struct platform_device *pdev)
 {
 	struct oplus_ufcs *chip;
@@ -4760,9 +4853,17 @@ static int oplus_ufcs_probe(struct platform_device *pdev)
 	if (rc < 0)
 		goto misc_dev_reg_err;
 
-	rc = oplus_ufcs_notify_reg(chip);
-	if (rc < 0)
-		goto nb_reg_err;
+	if (chip->config.adsp_ufcs_project) {
+		rc = oplus_plat_ufcs_notify_reg(chip);
+		if (rc < 0) {
+			chg_err("register plat ufcs failed.");
+			goto nb_reg_err;
+		}
+	} else {
+		rc = oplus_ufcs_notify_reg(chip);
+		if (rc < 0)
+			goto nb_reg_err;
+	}
 
 	startegy_node = of_get_child_by_name(pdev->dev.of_node, "ufcs_charge_third_strategy");
 	if (startegy_node == NULL) {
@@ -4815,6 +4916,10 @@ static int oplus_ufcs_probe(struct platform_device *pdev)
 		chg_err("get verify auth data fail, rc=%d\n", rc);
 	schedule_delayed_work(&chip->wait_auth_data_work, msecs_to_jiffies(UFCS_GET_AUTH_DATA_TIMEOUT_MS));
 
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+	(void)oplus_ufcs_reg_debug_config(chip);
+#endif
+
 	return 0;
 
 oplus_startegy_err:
@@ -4844,6 +4949,10 @@ imp_node_init_err:
 static int oplus_ufcs_remove(struct platform_device *pdev)
 {
 	struct oplus_ufcs *chip = platform_get_drvdata(pdev);
+
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+	oplus_ufcs_unreg_debug_config(chip);
+#endif
 
 	if (chip->ufcs_ic)
 		oplus_ufcs_virq_unreg(chip);

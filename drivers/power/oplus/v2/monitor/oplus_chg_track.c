@@ -636,7 +636,6 @@ struct oplus_chg_track {
 	oplus_chg_track_trigger *chg_cycle_info_trigger;
 	oplus_chg_track_trigger *wls_info_trigger;
 	oplus_chg_track_trigger *ufcs_info_trigger;
-	oplus_chg_track_trigger *deep_dischg_info_trigger;
 	oplus_chg_track_trigger *wired_online_err_trigger;
 
 	struct delayed_work mmi_chg_info_trigger_work;
@@ -644,14 +643,11 @@ struct oplus_chg_track {
 	struct delayed_work chg_cycle_info_trigger_work;
 	struct delayed_work wls_info_trigger_work;
 	struct delayed_work ufcs_info_trigger_work;
-	struct delayed_work deep_dischg_info_trigger_work;
-
 	struct mutex mmi_chg_info_lock;
 	struct mutex slow_chg_info_lock;
 	struct mutex chg_cycle_info_lock;
 	struct mutex wls_info_lock;
 	struct mutex ufcs_info_lock;
-	struct mutex deep_dischg_info_lock;
 
 	char voocphy_name[OPLUS_CHG_TRACK_VOOCPHY_NAME_LEN];
 
@@ -729,7 +725,6 @@ static struct flag_reason_table track_flag_reason_table[] = {
 	{ TRACK_NOTIFY_FLAG_TTF_INFO, "TtfInfo" },
 	{ TRACK_NOTIFY_FLAG_UISOH_INFO, "UiSohInfo" },
 	{ TRACK_NOTIFY_FLAG_GAUGE_INFO, "GaugeInfo" },
-	{ TRACK_NOTIFY_FLAG_BYPASS_BOOST_INFO, "DeepDischgInfo" },
 
 	{ TRACK_NOTIFY_FLAG_NO_CHARGING, "NoCharging" },
 	{ TRACK_NOTIFY_FLAG_NO_CHARGING_OTG_ONLINE, "OtgOnline" },
@@ -751,7 +746,6 @@ static struct flag_reason_table track_flag_reason_table[] = {
 
 	{ TRACK_NOTIFY_FLAG_WLS_ABNORMAL, "WlsAbnormal" },
 	{ TRACK_NOTIFY_FLAG_GPIO_ABNORMAL, "GpioAbnormal" },
-
 	{ TRACK_NOTIFY_FLAG_CP_ABNORMAL, "CpAbnormal" },
 	{ TRACK_NOTIFY_FLAG_PLAT_PMIC_ABNORMAL, "PlatPmicAbnormal" },
 	{ TRACK_NOTIFY_FLAG_EXTERN_PMIC_ABNORMAL, "ExternPmicAbnormal" },
@@ -762,10 +756,6 @@ static struct flag_reason_table track_flag_reason_table[] = {
 	{ TRACK_NOTIFY_FLAG_HK_ABNORMAL, "HouseKeepingAbnormal" },
 	{ TRACK_NOTIFY_FLAG_UFCS_IC_ABNORMAL, "UFCSICAbnormal" },
 	{ TRACK_NOTIFY_FLAG_ADAPTER_ABNORMAL, "AdapterAbnormal" },
-	{ TRACK_NOTIFY_FLAG_NTC_ABNORMAL, "NTCAbnormal" },
-	{ TRACK_NOTIFY_FLAG_BATT_ID_INFO, "Batt_Id_Info" },
-	{ TRACK_NOTIFY_FLAG_I2C_ABNORMAL, "I2cAbnormal" },
-	{ TRACK_NOTIFY_FLAG_BOOST_BUCK_ERR, "BoostICAbnormal" },
 
 	{ TRACK_NOTIFY_FLAG_UFCS_ABNORMAL, "UfcsAbnormal" },
 	{ TRACK_NOTIFY_FLAG_COOLDOWN_ABNORMAL, "CoolDownAbnormal" },
@@ -2871,19 +2861,6 @@ static void oplus_chg_track_ufcs_info_trigger_work(struct work_struct *work)
 	mutex_unlock(&chip->ufcs_info_lock);
 }
 
-static void oplus_chg_track_deep_dischg_info_trigger_work(struct work_struct *work)
-{
-	struct delayed_work *dwork = to_delayed_work(work);
-	struct oplus_chg_track *chip = container_of(dwork, struct oplus_chg_track, deep_dischg_info_trigger_work);
-
-	if (chip->deep_dischg_info_trigger) {
-		oplus_chg_track_upload_trigger_data(*(chip->deep_dischg_info_trigger));
-		kfree(chip->deep_dischg_info_trigger);
-		chip->deep_dischg_info_trigger = NULL;
-	}
-	mutex_unlock(&chip->deep_dischg_info_lock);
-}
-
 static void oplus_chg_track_wired_online_err_trigger_work(struct work_struct *work)
 {
 	struct delayed_work *dwork = to_delayed_work(work);
@@ -3000,7 +2977,6 @@ static int oplus_chg_track_init(struct oplus_chg_track *track_dev)
 	mutex_init(&chip->chg_cycle_info_lock);
 	mutex_init(&chip->wls_info_lock);
 	mutex_init(&chip->ufcs_info_lock);
-	mutex_init(&chip->deep_dischg_info_lock);
 	mutex_init(&chip->gauge_info.track_lock);
 	mutex_init(&chip->sub_gauge_info.track_lock);
 
@@ -3204,7 +3180,6 @@ static int oplus_chg_track_init(struct oplus_chg_track *track_dev)
 	INIT_DELAYED_WORK(&chip->chg_cycle_info_trigger_work, oplus_chg_track_chg_cycle_info_trigger_work);
 	INIT_DELAYED_WORK(&chip->wls_info_trigger_work, oplus_chg_track_wls_info_trigger_work);
 	INIT_DELAYED_WORK(&chip->ufcs_info_trigger_work, oplus_chg_track_ufcs_info_trigger_work);
-	INIT_DELAYED_WORK(&chip->deep_dischg_info_trigger_work, oplus_chg_track_deep_dischg_info_trigger_work);
 	INIT_DELAYED_WORK(&chip->wired_online_err_trigger_work, oplus_chg_track_wired_online_err_trigger_work);
 
 	return ret;
@@ -4111,7 +4086,7 @@ oplus_chg_track_cal_led_on_stats(struct oplus_monitor *monitor,
 		track_status->led_change_rm = monitor->batt_rm;
 	}
 	track_status->led_on = monitor->led_on;
-	chg_info("continue_ledoff_t:%d, continue_ledon_t:%d\n",
+	chg_debug("continue_ledoff_t:%d, continue_ledon_t:%d\n",
 		 track_status->continue_ledoff_time,
 		 track_status->continue_ledon_time);
 
@@ -4120,10 +4095,10 @@ oplus_chg_track_cal_led_on_stats(struct oplus_monitor *monitor,
 	    monitor->batt_soc >= TRACK_LED_MONITOR_SOC_POINT)
 		oplus_chg_track_cal_ledon_ledoff_average_speed(track_status);
 
-	chg_info("ch_t:%d, ch_rm:%d, ledoff_rm:%d, ledoff_t:%d, ledon_rm:%d, ledon_t:%d\n",
-		track_status->led_change_t, track_status->led_change_rm,
-		track_status->ledoff_rm, track_status->ledoff_time,
-		track_status->ledon_rm, track_status->ledon_time);
+	chg_debug("ch_t:%d, ch_rm:%d, ledoff_rm:%d, ledoff_t:%d, ledon_rm:%d, ledon_t:%d\n",
+		 track_status->led_change_t, track_status->led_change_rm,
+		 track_status->ledoff_rm, track_status->ledoff_time,
+		 track_status->ledon_rm, track_status->ledon_time);
 
 	return 0;
 }
@@ -4800,7 +4775,7 @@ int oplus_chg_track_cal_tbatt_status(struct oplus_monitor *monitor)
 	    (monitor->temp_region == TEMP_REGION_COLD))
 		track_status->tbatt_cold_once = true;
 
-	chg_info("tbatt_warm_once:%d, tbatt_cold_once:%d\n",
+	chg_debug("tbatt_warm_once:%d, tbatt_cold_once:%d\n",
 		 track_status->tbatt_warm_once, track_status->tbatt_cold_once);
 
 	return 0;
@@ -5084,20 +5059,21 @@ static int oplus_chg_track_cal_section_soc_inc_rm(
 		break;
 	}
 
-	chg_info(
-		"soc_sect_status:%d, time_go_next_status:%d, rm_go_next_status:%d\n",
-		track_status->soc_sect_status, time_go_next_status,
-		rm_go_next_status);
+	chg_debug(
+		 "soc_sect_status:%d, time_go_next_status:%d, rm_go_next_status:%d\n",
+		 track_status->soc_sect_status, time_go_next_status,
+		 rm_go_next_status);
 
-	chg_info("soc_low_sect_cont_time:%d, soc_low_sect_incr_rm:%d, "
-		 "soc_medium_sect_cont_time:%d, soc_medium_sect_incr_rm:%d "
-		 "soc_high_sect_cont_time:%d, soc_high_sect_incr_rm:%d\n",
-		 track_status->soc_low_sect_cont_time,
-		 track_status->soc_low_sect_incr_rm,
-		 track_status->soc_medium_sect_cont_time,
-		 track_status->soc_medium_sect_incr_rm,
-		 track_status->soc_high_sect_cont_time,
-		 track_status->soc_high_sect_incr_rm);
+	chg_debug("soc_low_sect_cont_time:%d, soc_low_sect_incr_rm:%d, "
+		  "soc_medium_sect_cont_time:%d, soc_medium_sect_incr_rm:%d "
+		  "soc_high_sect_cont_time:%d, soc_high_sect_incr_rm:%d\n",
+		  track_status->soc_low_sect_cont_time,
+		  track_status->soc_low_sect_incr_rm,
+		  track_status->soc_medium_sect_cont_time,
+		  track_status->soc_medium_sect_incr_rm,
+		  track_status->soc_high_sect_cont_time,
+		  track_status->soc_high_sect_incr_rm);
+
 	return 0;
 }
 
@@ -5571,10 +5547,6 @@ static int oplus_chg_track_upload_ic_err_info(struct oplus_chg_track *track)
 		track->ic_err_msg_load_trigger.flag_reason =
 			TRACK_NOTIFY_FLAG_GPIO_ABNORMAL;
 		break;
-	case OPLUS_IC_ERR_BATT_ID:
-		track->ic_err_msg_load_trigger.flag_reason =
-			TRACK_NOTIFY_FLAG_BATT_ID_INFO;
-		break;
 	case OPLUS_IC_ERR_PLAT_PMIC:
 		track->ic_err_msg_load_trigger.flag_reason =
 			TRACK_NOTIFY_FLAG_PLAT_PMIC_ABNORMAL;
@@ -5583,7 +5555,7 @@ static int oplus_chg_track_upload_ic_err_info(struct oplus_chg_track *track)
 		break;
 	case OPLUS_IC_ERR_BUCK_BOOST:
 		track->ic_err_msg_load_trigger.flag_reason =
-			TRACK_NOTIFY_FLAG_BOOST_BUCK_ERR;
+			TRACK_NOTIFY_FLAG_EXTERN_PMIC_ABNORMAL;
 		break;
 	case OPLUS_IC_ERR_GAUGE:
 		track->ic_err_msg_load_trigger.flag_reason =
@@ -5621,13 +5593,7 @@ static int oplus_chg_track_upload_ic_err_info(struct oplus_chg_track *track)
 		track->ic_err_msg_load_trigger.flag_reason =
 			TRACK_NOTIFY_FLAG_DCHG_ABNORMAL;
 		break;
-	case OPLUS_IC_ERR_NTC:
-		track->ic_err_msg_load_trigger.flag_reason = TRACK_NOTIFY_FLAG_NTC_ABNORMAL;
-		break;
 	case OPLUS_IC_ERR_I2C:
-		track->ic_err_msg_load_trigger.flag_reason =
-			TRACK_NOTIFY_FLAG_I2C_ABNORMAL;
-		break;
 	case OPLUS_IC_ERR_UNKNOWN:
 	default:
 		chg_err("unsupported error type(%d)\n", err_type);
@@ -6010,45 +5976,6 @@ static int oplus_chg_track_upload_ufcs_info(struct oplus_chg_track *chip)
 					  OPLUS_CHG_TRACK_CURX_INFO_LEN - index);
 
 	schedule_delayed_work(&chip->ufcs_info_trigger_work, 0);
-	chg_info("success\n");
-	return 0;
-}
-
-static int oplus_chg_track_upload_deep_dischg_info(struct oplus_chg_track *chip)
-{
-	int index = 0;
-	union mms_msg_data data = { 0 };
-	int rc = 0;
-
-	if (!chip)
-		return -EINVAL;
-
-	mutex_lock(&chip->deep_dischg_info_lock);
-	if (chip->deep_dischg_info_trigger)
-		kfree(chip->deep_dischg_info_trigger);
-
-	chip->deep_dischg_info_trigger = kzalloc(sizeof(oplus_chg_track_trigger), GFP_KERNEL);
-	if (!chip->deep_dischg_info_trigger) {
-		chg_err("deep_dischg_info_trigger memery alloc fail\n");
-		mutex_unlock(&chip->deep_dischg_info_lock);
-		return -ENOMEM;
-	}
-
-	chip->deep_dischg_info_trigger->type_reason = TRACK_NOTIFY_TYPE_GENERAL_RECORD;
-	chip->deep_dischg_info_trigger->flag_reason = TRACK_NOTIFY_FLAG_BYPASS_BOOST_INFO;
-
-	rc = oplus_mms_get_item_data(chip->monitor->err_topic, ERR_ITEM_DEEP_DISCHG_INFO, &data, false);
-	if (rc < 0) {
-		chg_err("get msg data error, rc=%d\n", rc);
-		kfree(chip->deep_dischg_info_trigger);
-		chip->deep_dischg_info_trigger = NULL;
-		mutex_unlock(&chip->deep_dischg_info_lock);
-		return rc;
-	}
-	index += snprintf(&(chip->deep_dischg_info_trigger->crux_info[index]), OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "%s",
-			  data.strval);
-
-	schedule_delayed_work(&chip->deep_dischg_info_trigger_work, 0);
 	chg_info("success\n");
 	return 0;
 }
@@ -6931,9 +6858,6 @@ static void oplus_chg_track_err_subs_callback(struct mms_subscribe *subs,
 			break;
 		case ERR_ITEM_UFCS:
 			oplus_chg_track_upload_ufcs_info(track);
-			break;
-		case ERR_ITEM_DEEP_DISCHG_INFO:
-			oplus_chg_track_upload_deep_dischg_info(track);
 			break;
 		default:
 			break;

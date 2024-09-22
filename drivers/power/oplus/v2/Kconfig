@@ -134,6 +134,12 @@ config OPLUS_VOOCPHY_SC8517
 	help
 	  Say Y here to declare bidirect cp sc8517 support
 
+config OPLUS_VOOCPHY_MAX77939
+	bool "bidirect cp max77939 support"
+	depends on OPLUS_CHG_VOOCPHY_CHGLIB && OPLUS_CHG_AP_VOOCPHY
+	help
+	  Say Y here to declare bidirect cp max77939 support
+
 config OPLUS_AUDIO_SWITCH_GLINK
 	bool "audio switch glink support"
 	help

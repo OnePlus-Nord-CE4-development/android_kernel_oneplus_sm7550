@@ -142,7 +142,7 @@ EXPORT_SYMBOL_GPL(oem_gpio_control);
 #endif /* CONFIG_OPLUS_OPTIGA_LOW_DELAY */
 
 
-static try_count = 0;
+static int try_count = 0;
 void set_optiga_pin(uint8_t level){
 	int en = level;
 
@@ -720,7 +720,7 @@ static struct platform_driver oplus_optiga_driver = {
 	},
 };
 
-static __init oplus_optiga_driver_init(void)
+static __init int oplus_optiga_driver_init(void)
 {
 	int ret;
 	chg_err("%s: start\n", __func__);

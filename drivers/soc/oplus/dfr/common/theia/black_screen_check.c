@@ -22,7 +22,7 @@ static int g_check_dt_retry_count;
 	} while (0)
 
 struct pwrkey_monitor_data g_black_data = {
-	.is_panic = 0,
+	.is_panic = 1,
 	.status = BLACK_STATUS_INIT,
 	.blank = THEIA_PANEL_BLANK_VALUE,
 	.timeout_ms = BLACK_SLOW_STATUS_TIMEOUT_MS,
@@ -218,9 +218,6 @@ static bool is_need_skip(void)
 		return true;
 
 	if (is_black_contain_skip_stage())
-		return true;
-
-	if (is_slowkernel_skip())
 		return true;
 
 	return false;

@@ -31,10 +31,6 @@ struct audio_switch {
 
 static struct audio_switch g_audio_switch;
 
-#if IS_ENABLED(CONFIG_TCPC_CLASS)
-#define AUDIO_SWITCH_BY_TYPEC_NOTIFY 1
-#endif
-
 #if IS_ENABLED(CONFIG_OPLUS_AUDIO_SWITCH_GLINK)
 static RAW_NOTIFIER_HEAD(chg_glink_notifier);
 #endif
@@ -94,7 +90,7 @@ static void audio_switch_init(void)
 
 static int oplus_set_audio_switch_status(int state)
 {
-#ifdef AUDIO_SWITCH_BY_TYPEC_NOTIFY
+#if (IS_ENABLED(CONFIG_TCPC_CLASS) || IS_ENABLED(CONFIG_OPLUS_AUDIO_SWITCH_GLINK))
 	int ret = 0;
 	int wait = 0;
 	unsigned long switch_cnt = 0;
@@ -119,7 +115,7 @@ static int oplus_set_audio_switch_status(int state)
 			break;
 		}
 		wait++;
-		mdelay(OPLUS_AUDIO_WAIT_TIME);
+		msleep(OPLUS_AUDIO_WAIT_TIME);
 	}
 
 	if (wait >= OPLUS_AUDIO_SET_MAX_TIME) {
@@ -139,7 +135,7 @@ static int oplus_set_audio_switch_status(int state)
 
 static int oplus_get_audio_switch_status(void)
 {
-#ifdef AUDIO_SWITCH_BY_TYPEC_NOTIFY
+#if (IS_ENABLED(CONFIG_TCPC_CLASS) || IS_ENABLED(CONFIG_OPLUS_AUDIO_SWITCH_GLINK))
 	int ret = 0;
 	int wait = 0;
 	unsigned long switch_cnt = 0;
@@ -166,7 +162,7 @@ static int oplus_get_audio_switch_status(void)
 			break;
 		}
 		wait++;
-		mdelay(OPLUS_AUDIO_WAIT_TIME);
+		msleep(OPLUS_AUDIO_WAIT_TIME);
 	}
 
 	if (wait >= OPLUS_AUDIO_GET_MAX_TIME) {

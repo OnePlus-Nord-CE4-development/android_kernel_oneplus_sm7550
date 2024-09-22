@@ -1030,7 +1030,7 @@ static struct of_device_id hl7138_charger_match_table[] = {
 static int hl7138_gpio_init(struct oplus_voocphy_manager *chip)
 {
 	if (!chip) {
-		chg_err("oplus_chip not ready!\n", __func__);
+		chg_err("oplus_chip not ready!\n");
 		return -EINVAL;
 	}
 
@@ -1069,7 +1069,7 @@ static int hl7138_gpio_init(struct oplus_voocphy_manager *chip)
 	                     chip->slave_charging_inter_default);
 	}
 
-	chg_err("oplus_chip is ready!\n", __func__);
+	chg_err("oplus_chip is ready!\n");
 	return 0;
 }
 

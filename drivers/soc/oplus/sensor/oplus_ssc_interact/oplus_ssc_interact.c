@@ -87,9 +87,12 @@ static void ssc_interactive_set_blank_mode(uint16_t blank_mode)
 	ssc_cxt->a_info.blank_mode = blank_mode;
 	brigtness = ssc_cxt->last_primary_bri;
 	spin_unlock(&ssc_cxt->rw_lock);
-	pr_info("set blank_mode=%d, re-send last bri=%d\n", (int)blank_mode, (int)brigtness);
+	pr_info("set blank_mode=%d\n", (int)blank_mode);
 	ssc_interactive_set_fifo(LCM_BLANK_MODE_TYPE, blank_mode);
-	ssc_interactive_set_fifo(LCM_BRIGHTNESS_TYPE, brigtness);
+	if (blank_mode == SCREEN_ON) {
+		pr_info("set bri=%d after screen on\n", (int)brigtness);
+		ssc_interactive_set_fifo(LCM_BRIGHTNESS_TYPE, brigtness);
+	}
 }
 
 static void ssc_interactive_set_pwm_turbo_mode(int on)
@@ -487,7 +490,7 @@ static void lcdinfo_callback(enum panel_event_notifier_tag panel_tag,
 			ssc_fb_set_screen_status(SCREEN_ON);
 		}
 #endif
-		if (g_ssc_cxt->report_blank_mode) {
+		if (g_ssc_cxt->need_lb_algo) {
 			ssc_interactive_set_blank_mode(SCREEN_ON);
 		}
 		break;
@@ -497,7 +500,7 @@ static void lcdinfo_callback(enum panel_event_notifier_tag panel_tag,
 			ssc_fb_set_screen_status(SCREEN_OFF);
 		}
 #endif
-		if (g_ssc_cxt->report_blank_mode) {
+		if (g_ssc_cxt->need_lb_algo) {
 			ssc_interactive_set_blank_mode(SCREEN_OFF);
 		}
 		break;
@@ -752,14 +755,6 @@ static int __init ssc_interactive_init(void)
 		} else {
 			ssc_cxt->sup_power_fb = false;
 			pr_err("not sup power_fb!");
-		}
-
-		if (of_property_read_bool(node, "report_blank_mode")) {
-			ssc_cxt->report_blank_mode = true;
-			pr_err("sup report_blank_mode!");
-		} else {
-			ssc_cxt->report_blank_mode = false;
-			pr_err("not sup report_blank_mode!");
 		}
 
 		err = of_property_read_u32(node, "sup-hbm-mode", &hbm_mode);

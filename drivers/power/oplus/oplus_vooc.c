@@ -50,7 +50,6 @@ extern int enable_charger_log;
 
 static struct oplus_vooc_chip *g_vooc_chip = NULL;
 static struct oplus_vooc_cp *g_vooc_cp = NULL;
-static bool force_allow_reading = true;
 bool __attribute__((weak)) oplus_get_fg_i2c_err_occured(void)
 {
 	return false;
@@ -1262,7 +1261,7 @@ static void oplus_vooc_fastchg_func(struct work_struct *work)
 	static bool normalchg_disabled = false;
 	int abnormal_dis_cnt = 0;
 	char buf[1] = { 0 };
-	static int need_upload = true;
+	static bool need_upload = true;
 	/*
 	if (!g_adapter_chip) {
 		chg_err(" g_adapter_chip NULL\n");
@@ -1690,7 +1689,7 @@ static void oplus_vooc_fastchg_func(struct work_struct *work)
 
 		oplus_vooc_wake_bcc_work_when_fastchg();
 
-		vooc_xlog_printk(CHG_LOG_CRTI, "temp_range[%d-%d-%d-%d-%d-%d]", chip->vooc_low_temp,
+		vooc_xlog_printk(CHG_LOG_CRTI, "temp_range[%d-%d-%d-%d-%d-%d-%d]", chip->vooc_low_temp,
 				 chip->vooc_little_cold_temp, chip->vooc_cool_temp, chip->vooc_little_cool_temp,
 				 chip->vooc_normal_low_temp, chip->vooc_normal_high_temp, chip->vooc_high_temp);
 		vooc_xlog_printk(CHG_LOG_CRTI,
@@ -2181,7 +2180,7 @@ void oplus_vooc_shedule_fastchg_work(void)
 	}
 }
 
-static int voocphy_dump_log_data(char *buffer, int size, void *dev_data)
+static int vooc_dump_log_data(char *buffer, int size, void *dev_data)
 {
 	struct oplus_vooc_chip *chip = dev_data;
 
@@ -2195,7 +2194,7 @@ static int voocphy_dump_log_data(char *buffer, int size, void *dev_data)
 	return 0;
 }
 
-static int voocphy_get_log_head(char *buffer, int size, void *dev_data)
+static int vooc_get_log_head(char *buffer, int size, void *dev_data)
 {
 	struct oplus_vooc_chip *chip = dev_data;
 
@@ -2203,15 +2202,15 @@ static int voocphy_get_log_head(char *buffer, int size, void *dev_data)
 		return -ENOMEM;
 
 	snprintf(buffer, size,
-		",[voocphy]:fastchg_start,dummy_start,vooc_online_keep");
+		",fastchg_start,dummy_start,vooc_online_keep");
 
 	return 0;
 }
 
-static struct battery_log_ops battlog_voocphy_ops = {
-	.dev_name = "voocphy",
-	.dump_log_head = voocphy_get_log_head,
-	.dump_log_content = voocphy_dump_log_data,
+static struct battery_log_ops battlog_vooc_ops = {
+	.dev_name = "vooc",
+	.dump_log_head = vooc_get_log_head,
+	.dump_log_content = vooc_dump_log_data,
 };
 
 static ssize_t proc_fastchg_fw_update_write(struct file *file, const char __user *buff, size_t len, loff_t *data)
@@ -2369,8 +2368,8 @@ void oplus_vooc_init(struct oplus_vooc_chip *chip)
 	INIT_DELAYED_WORK(&chip->bcc_get_max_min_curr, oplus_vooc_bcc_get_curr_func);
 	g_vooc_chip = chip;
 	chip->vops->eint_regist(chip);
-	battlog_voocphy_ops.dev_data = (void *)chip;
-	battery_log_ops_register(&battlog_voocphy_ops);
+	battlog_vooc_ops.dev_data = (void *)chip;
+	battery_log_ops_register(&battlog_vooc_ops);
 	if (chip->vooc_fw_update_newmethod) {
 		if (oplus_is_rf_ftm_mode()) {
 			return;
@@ -2434,7 +2433,7 @@ void oplus_vooc_print_log(void)
 bool oplus_vooc_get_allow_reading(void)
 {
 	if (!g_vooc_chip) {
-		return force_allow_reading;
+		return true;
 	} else {
 		if (g_vooc_chip->support_vooc_by_normal_charger_path &&
 		    g_vooc_chip->fast_chg_type == CHARGER_SUBTYPE_FASTCHG_VOOC) {
@@ -2442,15 +2441,6 @@ bool oplus_vooc_get_allow_reading(void)
 		} else {
 			return g_vooc_chip->allow_reading;
 		}
-	}
-}
-
-void oplus_vooc_set_allow_reading(bool state)
-{
-	if (!g_vooc_chip) {
-		force_allow_reading = state;
-	} else {
-		g_vooc_chip->allow_reading = state;
 	}
 }
 
@@ -2893,6 +2883,7 @@ static int oplus_vooc_convert_fast_chg_type(int fast_chg_type)
 		break;
 	case FASTCHG_VERSION_11V3A_FLASHCHARGER:
 	case FASTCHG_VERSION_11VP4A_SINGLE_BAT_SVOOC:
+	case FASTCHG_VERSION_45W_SVOOC:
 		fastchg_pwr_type = FASTCHG_POWER_11V3A_FLASHCHARGER;
 		break;
 	case FASTCHG_VERSION_10V6A_DUAL_CP_SVOOC:
@@ -2922,23 +2913,19 @@ static int oplus_vooc_convert_fast_chg_type(int fast_chg_type)
 	case 0x31:		/*50w*/
 	case 0x33:		/*50w*/
 	case 0x62:		/*reserve for svooc*/
-		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC) {
+		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC)
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
-		} else {
+		else
 			return fast_chg_type;
-		}
-		return CHARGER_SUBTYPE_FASTCHG_VOOC;
 		break;
 	case 0x24:		/*55w*/
 	case 0x25:		/*55w*/
 	case 0x26:		/*55w*/
 	case 0x27:		/*55w*/
-		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC) {
+		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC)
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
-		} else {
+		else
 			return fast_chg_type;
-		}
-		return CHARGER_SUBTYPE_FASTCHG_VOOC;
 		break;
 	case 0x14:		/*65w*/
 	case 0x28:		/*65w*/
@@ -2947,36 +2934,29 @@ static int oplus_vooc_convert_fast_chg_type(int fast_chg_type)
 	case 0x63:		/*reserve for svooc 2.0*/
 	case 0x66:		/*reserve for svooc 2.0*/
 	case 0x6E:		/*reserve for svooc 2.0*/
-		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC) {
+		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC)
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
-		} else {
+		else
 			return fast_chg_type;
-		}
-		return CHARGER_SUBTYPE_FASTCHG_VOOC;
 		break;
 	case 0x2B:		/*66w*/
 	case 0x36:		/*66w*/
 	case 0x64:		/*66w*/
-		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC) {
+		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC)
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
-		} else {
+		else
 			return fast_chg_type;
-		}
-		return CHARGER_SUBTYPE_FASTCHG_VOOC;
 		break;
 	case 0x2C:		/*67w*/
 	case 0x2D:		/*67w*/
 	case 0x2E:		/*67w*/
 	case 0x6C:		/*67w*/
 	case 0x6D:		/*67w*/
-		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC) {
+		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC)
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
-		} else {
+		else
 			return fast_chg_type;
-		}
-		return CHARGER_SUBTYPE_FASTCHG_VOOC;
 		break;
-
 	case 0x0F: /*special code*/
 	case 0x1F: /*special code*/
 	case 0x3F: /*special code*/
@@ -2994,6 +2974,7 @@ static int oplus_vooc_convert_fast_chg_type(int fast_chg_type)
 		} else {
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
 		}
+		break;
 	case 0x1:		/*for adapter AK779*/
 	case 0x13:		/*20W*/
 	case 0x15:		/*20W*/
@@ -3014,76 +2995,66 @@ static int oplus_vooc_convert_fast_chg_type(int fast_chg_type)
 	case 0x61:		/* 11V3A*/
 	case 0x49:		/*for 11V3A adapter temp*/
 	case 0x4A:		/*for 11V3A adapter temp*/
-		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC) {
+		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC)
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
-		} else {
+		else
 			return fast_chg_type;
-		}
-		return CHARGER_SUBTYPE_FASTCHG_VOOC;
+		break;
 	case 0x1C:		/* 44W*/
 	case 0x1D:		/* 44W*/
 	case 0x1E:		/* 44W*/
 	case 0x22:		/* 44W*/
-		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC) {
+		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC)
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
-		} else {
+		else
 			return fast_chg_type;
-		}
-		return CHARGER_SUBTYPE_FASTCHG_VOOC;
+		break;
 	case 0x65:		/*for 80W adapter temp*/
 	case 0x4B:		/*for 80W adapter temp*/
 	case 0x4C:		/*for 80W adapter temp*/
 	case 0x4D:		/*for 80W adapter temp*/
 	case 0x4E:		/*for 80W adapter temp*/
-		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC) {
+		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC)
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
-		} else {
+		else
 			return fast_chg_type;
-		}
-		return CHARGER_SUBTYPE_FASTCHG_VOOC;
+		break;
 	case 0x37:		/*for 88W*/
 	case 0x38:		/*for 88W*/
 	case 0x39:		/*for 88W*/
 	case 0x3A:		/*for 88W*/
-		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC) {
+		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC)
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
-		} else {
+		else
 			return fast_chg_type;
-		}
-		return CHARGER_SUBTYPE_FASTCHG_VOOC;
+		break;
 	case 0x3B:		/*100W*/
 	case 0x3C:		/*100W*/
 	case 0x3D:		/*100W*/
 	case 0x3E:		/*100W*/
 	case 0x69:		/*100W*/
 	case 0x6A:		/*100W*/
-		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC) {
+		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC)
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
-		} else {
+		else
 			return fast_chg_type;
-		}
-		return CHARGER_SUBTYPE_FASTCHG_VOOC;
-
+		break;
 	case 0x32:		/*120W*/
 	case 0x47:		/*120W*/
 	case 0x48:		/*120W*/
 	case 0x6B:		/*120W*/
-		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC) {
+		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC)
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
-		} else {
+		else
 			return fast_chg_type;
-		}
-		return CHARGER_SUBTYPE_FASTCHG_VOOC;
 		break;
 	case 0x51:		/*125W*/
 	case 0x67:		/*125W*/
 	case 0x68:		/*125W*/
-		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC) {
+		if (fastchg_pwr_type == FASTCHG_POWER_5V4A_5V6A_VOOC)
 			return CHARGER_SUBTYPE_FASTCHG_VOOC;
-		} else {
+		else
 			return fast_chg_type;
-		}
-		return CHARGER_SUBTYPE_FASTCHG_VOOC;
 		break;
 	default:
 		return CHARGER_SUBTYPE_FASTCHG_SVOOC;

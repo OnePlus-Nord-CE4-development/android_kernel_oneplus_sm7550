@@ -217,13 +217,19 @@ struct wls_match_q_type {
 	u8 q_value;
 };
 
+struct wls_fod_parm_type {
+	u8 id;
+	u8 fod_parm[WLS_FOD_PARM_LEN_MAX];
+};
+
 struct oplus_chg_wls_static_config {
 	bool fastchg_fod_enable;
 	bool fastchg_12v_fod_enable;
-	u8 fod_parm_len;
+	int fod_parm_len;
+	int fod_parm_max_sets;
 	u8 disable_fod_parm[WLS_FOD_PARM_LEN_MAX];
-	u8 fastchg_fod_parm[WLS_FOD_PARM_LEN_MAX];
-	u8 fastchg_fod_parm_12v[WLS_FOD_PARM_LEN_MAX];
+	struct wls_fod_parm_type fastchg_fod_parm[WLS_BASE_NUM_MAX];
+	struct wls_fod_parm_type fastchg_fod_parm_12v[WLS_BASE_NUM_MAX];
 	struct wls_match_q_type fastchg_match_q[WLS_BASE_NUM_MAX];
 };
 
@@ -797,7 +803,7 @@ static int oplus_chg_wls_get_tripartite_r_power(u8 f2_data)
 	return r_pwr;
 }
 
-#define WLS_BASE_ID_DEFAUTL  0x02
+#define WLS_BASE_ID_DEFAULT	0x02
 static u8 oplus_chg_wls_get_q_value(struct oplus_chg_wls *wls_dev, u8 id)
 {
 	int i;
@@ -808,12 +814,66 @@ static u8 oplus_chg_wls_get_q_value(struct oplus_chg_wls *wls_dev, u8 id)
 	}
 
 	for (i = 0; i < WLS_BASE_NUM_MAX; i++) {
-		if (wls_dev->static_config.fastchg_match_q[i].id == WLS_BASE_ID_DEFAUTL)
+		if (wls_dev->static_config.fastchg_match_q[i].id == WLS_BASE_ID_DEFAULT)
 			return wls_dev->static_config.fastchg_match_q[i].q_value;
 	}
 
 	return 0;
 }
+
+#define WLS_FOD_PARM_ID_DEFAULT	0xff
+static u8* oplus_chg_wls_get_fod_parm(struct oplus_chg_wls *wls_dev, u8 id)
+{
+	int i;
+	static u8 fod_parm[WLS_FOD_PARM_LEN_MAX];
+
+	memcpy(fod_parm, oplus_chg_wls_disable_fod_parm, ARRAY_SIZE(oplus_chg_wls_disable_fod_parm));
+
+	for (i = 0; i < wls_dev->static_config.fod_parm_max_sets; i++) {
+		if (wls_dev->static_config.fastchg_fod_parm[i].id == WLS_FOD_PARM_ID_DEFAULT) {
+			memcpy(fod_parm, wls_dev->static_config.fastchg_fod_parm[i].fod_parm,
+				wls_dev->static_config.fod_parm_len);
+			break;
+		}
+	}
+
+	for (i = 0; i < wls_dev->static_config.fod_parm_max_sets; i++) {
+		if (wls_dev->static_config.fastchg_fod_parm[i].id == id) {
+			memcpy(fod_parm, wls_dev->static_config.fastchg_fod_parm[i].fod_parm,
+				wls_dev->static_config.fod_parm_len);
+			break;
+		}
+	}
+
+	return fod_parm;
+}
+
+static u8* oplus_chg_wls_get_fod_parm_12v(struct oplus_chg_wls *wls_dev, u8 id)
+{
+	int i;
+	static u8 fod_parm_12v[WLS_FOD_PARM_LEN_MAX];
+
+	memcpy(fod_parm_12v, oplus_chg_wls_disable_fod_parm, ARRAY_SIZE(oplus_chg_wls_disable_fod_parm));
+
+	for (i = 0; i < wls_dev->static_config.fod_parm_max_sets; i++) {
+		if (wls_dev->static_config.fastchg_fod_parm_12v[i].id == WLS_FOD_PARM_ID_DEFAULT) {
+			memcpy(fod_parm_12v, wls_dev->static_config.fastchg_fod_parm_12v[i].fod_parm,
+				wls_dev->static_config.fod_parm_len);
+			break;
+		}
+	}
+
+	for (i = 0; i < wls_dev->static_config.fod_parm_max_sets; i++) {
+		if (wls_dev->static_config.fastchg_fod_parm_12v[i].id == id) {
+			memcpy(fod_parm_12v, wls_dev->static_config.fastchg_fod_parm_12v[i].fod_parm,
+				wls_dev->static_config.fod_parm_len);
+			break;
+		}
+	}
+
+	return fod_parm_12v;
+}
+
 
 static int oplus_chg_wls_get_ibat(struct oplus_chg_wls *wls_dev, int *ibat_ma)
 {
@@ -1747,10 +1807,12 @@ static void oplus_chg_wls_standard_msg_handler(struct oplus_chg_wls *wls_dev,
 			if (wls_dev->static_config.fastchg_fod_enable) {
 				if (wls_status->fod_parm_for_fastchg)
 					(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
-						wls_dev->static_config.fastchg_fod_parm, wls_dev->static_config.fod_parm_len);
+						oplus_chg_wls_get_fod_parm(wls_dev, wls_status->adapter_id),
+						wls_dev->static_config.fod_parm_len);
 				else if (wls_dev->static_config.fastchg_12v_fod_enable)
 					(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
-						wls_dev->static_config.fastchg_fod_parm_12v, wls_dev->static_config.fod_parm_len);
+						oplus_chg_wls_get_fod_parm_12v(wls_dev, wls_status->adapter_id),
+						wls_dev->static_config.fod_parm_len);
 			} else {
 				(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
 					wls_dev->static_config.disable_fod_parm, wls_dev->static_config.fod_parm_len);
@@ -6736,10 +6798,12 @@ static int oplus_chg_wls_rx_enter_state_fast(struct oplus_chg_wls *wls_dev)
 		if (wls_dev->static_config.fastchg_fod_enable) {
 			if (wls_status->fod_parm_for_fastchg)
 				(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
-					wls_dev->static_config.fastchg_fod_parm, wls_dev->static_config.fod_parm_len);
+					oplus_chg_wls_get_fod_parm(wls_dev, wls_status->adapter_id),
+					wls_dev->static_config.fod_parm_len);
 			else if (wls_dev->static_config.fastchg_12v_fod_enable)
 				(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
-					wls_dev->static_config.fastchg_fod_parm_12v, wls_dev->static_config.fod_parm_len);
+					oplus_chg_wls_get_fod_parm_12v(wls_dev, wls_status->adapter_id),
+					wls_dev->static_config.fod_parm_len);
 		} else {
 			(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
 				wls_dev->static_config.disable_fod_parm, wls_dev->static_config.fod_parm_len);
@@ -7082,7 +7146,8 @@ static int oplus_chg_wls_rx_enter_state_ffc(struct oplus_chg_wls *wls_dev)
 
 		if (wls_dev->static_config.fastchg_12v_fod_enable)
 			(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
-				wls_dev->static_config.fastchg_fod_parm_12v, wls_dev->static_config.fod_parm_len);
+				oplus_chg_wls_get_fod_parm_12v(wls_dev, wls_status->adapter_id),
+				wls_dev->static_config.fod_parm_len);
 		else
 			(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
 				wls_dev->static_config.disable_fod_parm, wls_dev->static_config.fod_parm_len);
@@ -7236,7 +7301,8 @@ static int oplus_chg_wls_rx_enter_state_done(struct oplus_chg_wls *wls_dev)
 
 			if (wls_dev->static_config.fastchg_12v_fod_enable)
 				(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
-					wls_dev->static_config.fastchg_fod_parm_12v, wls_dev->static_config.fod_parm_len);
+					oplus_chg_wls_get_fod_parm_12v(wls_dev, wls_status->adapter_id),
+					wls_dev->static_config.fod_parm_len);
 			else
 				(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
 					wls_dev->static_config.disable_fod_parm, wls_dev->static_config.fod_parm_len);
@@ -7369,7 +7435,8 @@ static int oplus_chg_wls_rx_enter_state_quiet(struct oplus_chg_wls *wls_dev)
 
 			if (wls_dev->static_config.fastchg_12v_fod_enable)
 				(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
-					wls_dev->static_config.fastchg_fod_parm_12v, wls_dev->static_config.fod_parm_len);
+					oplus_chg_wls_get_fod_parm_12v(wls_dev, wls_status->adapter_id),
+					wls_dev->static_config.fod_parm_len);
 			else
 				(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
 					wls_dev->static_config.disable_fod_parm, wls_dev->static_config.fod_parm_len);
@@ -7500,7 +7567,8 @@ static int oplus_chg_wls_rx_enter_state_stop(struct oplus_chg_wls *wls_dev)
 		} else {
 			if (wls_dev->static_config.fastchg_12v_fod_enable)
 				(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
-					wls_dev->static_config.fastchg_fod_parm_12v, wls_dev->static_config.fod_parm_len);
+					oplus_chg_wls_get_fod_parm_12v(wls_dev, wls_status->adapter_id),
+					wls_dev->static_config.fod_parm_len);
 			else
 				(void)oplus_chg_wls_rx_set_fod_parm(wls_dev->wls_rx->rx_ic,
 					wls_dev->static_config.disable_fod_parm, wls_dev->static_config.fod_parm_len);
@@ -8733,26 +8801,59 @@ static int oplus_chg_wls_parse_dt(struct oplus_chg_wls *wls_dev)
 
 	static_cfg->fastchg_fod_enable = of_property_read_bool(node, "oplus,fastchg-fod-enable");
 	if (static_cfg->fastchg_fod_enable) {
+		rc = of_property_read_u32(node, "oplus,fastchg-fod-parm-len", &static_cfg->fod_parm_len);
+		if (rc < 0) {
+			static_cfg->fod_parm_len = sizeof(oplus_chg_wls_disable_fod_parm);
+			chg_err("Read oplus,fastchg-fod-parm-len failed, rc=%d\n", rc);
+		}
+		if (static_cfg->fod_parm_len > WLS_FOD_PARM_LEN_MAX)
+			static_cfg->fod_parm_len = WLS_FOD_PARM_LEN_MAX;
+
 		rc = of_property_count_elems_of_size(node, "oplus,fastchg-fod-parm", sizeof(u8));
 		if (rc < 0) {
 			static_cfg->fod_parm_len = sizeof(oplus_chg_wls_disable_fod_parm);
-			chg_err("Read oplus,fastchg-fod-parm len failed, rc=%d\n", rc);
-		} else {
-			static_cfg->fod_parm_len = rc;
-			chg_info("oplus,fastchg-fod-parm length:%d\n", static_cfg->fod_parm_len);
-		}
-		rc = of_property_read_u8_array(node, "oplus,fastchg-fod-parm",
-			(u8 *)&static_cfg->fastchg_fod_parm, static_cfg->fod_parm_len);
-		if (rc < 0) {
 			static_cfg->fastchg_fod_enable = false;
-			chg_err("Read oplus,fastchg-fod-parm failed, rc=%d\n", rc);
+			chg_err("Read oplus,fastchg-fod-parm size failed, rc=%d\n", rc);
+		} else {
+			length = rc;
+			static_cfg->fod_parm_max_sets = length / (WLS_FOD_PARM_LEN_MAX + 1);
+			rc = of_property_read_u8_array(node, "oplus,fastchg-fod-parm",
+				(u8 *)&static_cfg->fastchg_fod_parm, length);
+			if (rc < 0) {
+				static_cfg->fastchg_fod_enable = false;
+				chg_err("Read oplus,fastchg-fod-parm failed, rc=%d\n", rc);
+			} else {
+				for (i = 0; i <  static_cfg->fod_parm_max_sets; i++) {
+					printk(KERN_CONT "fastchg-fod-parm: 0x%x:", static_cfg->fastchg_fod_parm[i].id);
+					for (j = 0; j < static_cfg->fod_parm_len; j++)
+						printk(KERN_CONT " 0x%x", static_cfg->fastchg_fod_parm[i].fod_parm[j]);
+					printk(KERN_CONT "\n");
+				}
+			}
 		}
-		rc = of_property_read_u8_array(node, "oplus,fastchg-fod-parm-12V",
-			(u8 *)&static_cfg->fastchg_fod_parm_12v, sizeof(oplus_chg_wls_disable_fod_parm));
+
 		static_cfg->fastchg_12v_fod_enable = true;
+		rc = of_property_count_elems_of_size(node, "oplus,fastchg-fod-parm-12V", sizeof(u8));
 		if (rc < 0) {
+			static_cfg->fod_parm_len = sizeof(oplus_chg_wls_disable_fod_parm);
 			static_cfg->fastchg_12v_fod_enable = false;
-			chg_err("Read oplus,fastchg-fod-parm-12V failed, rc=%d\n", rc);
+			chg_err("Read oplus,fastchg-fod-parm-12V size failed, rc=%d\n", rc);
+		} else {
+			length = rc;
+			static_cfg->fod_parm_max_sets = length / (WLS_FOD_PARM_LEN_MAX + 1);
+			rc = of_property_read_u8_array(node, "oplus,fastchg-fod-parm-12V",
+				(u8 *)&static_cfg->fastchg_fod_parm_12v, length);
+			if (rc < 0) {
+				static_cfg->fastchg_12v_fod_enable = false;
+				chg_err("Read oplus,oplus,fastchg-fod-parm-12V failed, rc=%d\n", rc);
+			} else {
+				for (i = 0; i <  static_cfg->fod_parm_max_sets; i++) {
+					printk(KERN_CONT "fastchg-fod-parm-12V: 0x%x:", static_cfg->fastchg_fod_parm_12v[i].id);
+					for (j = 0; j < static_cfg->fod_parm_len; j++)
+						printk(KERN_CONT " 0x%x", static_cfg->fastchg_fod_parm_12v[i].fod_parm[j]);
+					printk(KERN_CONT "\n");
+				}
+			}
 		}
 	}
 

@@ -953,7 +953,7 @@ __oplus_mms_register(struct device *parent, const struct oplus_mms_desc *desc,
 	struct oplus_mms *mms;
 	int rc;
 	int i;
-#ifdef CONFIG_OPLUS_CHG_IC_DEBUG
+#ifdef CONFIG_OPLUS_CHG_MMS_DEBUG
 	struct device_attribute **attrs;
 	struct device_attribute *attr;
 #endif

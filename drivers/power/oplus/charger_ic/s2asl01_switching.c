@@ -1713,13 +1713,19 @@ static void s2asl01_switching_shutdown(struct i2c_client *client)
 	pr_info("%s\n", __func__);
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void s2asl01_switching_remove(struct i2c_client *client)
+#else
 static int s2asl01_switching_remove(struct i2c_client *client)
+#endif
 {
 	struct s2asl01_switching_data *switching = i2c_get_clientdata(client);
 
 	power_supply_unregister(switching->psy_sw);
 	mutex_destroy(&switching->i2c_lock);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
 	return 0;
+#endif
 }
 
 #if IS_ENABLED(CONFIG_PM)

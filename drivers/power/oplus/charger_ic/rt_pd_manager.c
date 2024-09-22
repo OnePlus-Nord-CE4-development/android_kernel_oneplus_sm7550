@@ -28,16 +28,20 @@
 #include "../../../../../../kernel/msm-5.4/drivers/usb/typec/tcpc/inc/tcpci.h"
 #include "../../../../../../kernel/msm-5.4/drivers/usb/typec/tcpc/inc/tcpm.h"
 #include "../../../../../../kernel/msm-5.4/drivers/usb/typec/tcpc/inc/tcpci_typec.h"
-#else
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
 #include "../../../../../../kernel_platform/msm-kernel/drivers/usb/typec/pd/inc/tcpci.h"
 #include "../../../../../../kernel_platform/msm-kernel/drivers/usb/typec/pd/inc/tcpm.h"
 #include "../../../../../../kernel_platform/msm-kernel/drivers/usb/typec/pd/inc/tcpci_typec.h"
+#else
+#include "../../../../usb/typec/tcpc/inc/tcpci.h"
+#include "../../../../usb/typec/tcpc/inc/tcpm.h"
+#include "../../../../usb/typec/tcpc/inc/tcpci_typec.h"
 #endif
 #include "../oplus_charger.h"
 #include "oplus_sy6974b.h"
 #include "oplus_sy6970_reg.h"
-#undef dev_info
-#define dev_info dev_err
+//#undef dev_info
+//#define dev_info dev_err
 
 #define RT_PD_MANAGER_VERSION	"0.0.8_G"
 
@@ -861,6 +865,7 @@ static int pd_tcp_notifier_call(struct notifier_block *nb,
 					     TYPEC_PWR_MODE_PD);
 			if (!rpmd->partner)
 				break;
+			oplus_chg_pps_get_source_cap();
 			ret = tcpm_inquire_pd_partner_inform(rpmd->tcpc,
 							     partner_vdos);
 			if (ret != TCPM_SUCCESS)

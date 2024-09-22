@@ -45,9 +45,6 @@ static const char * const err_type_text[] = {
 	[OPLUS_IC_ERR_OFFLINE]		= "Offline",
 	[OPLUS_IC_ERR_UFCS]		= "UFCS",
 	[OPLUS_IC_ERR_GAN_MOS_ERROR]	= "GanMosError",
-	[OPLUS_IC_ERR_NTC]		= "NTC",
-	[OPLUS_IC_ERR_BYB_ID]		= "BYBID",
-	[OPLUS_IC_ERR_BATT_ID] 		= "BATTID",
 };
 
 static DEFINE_MUTEX(list_lock);
@@ -433,22 +430,6 @@ void *oplus_chg_ic_get_item_data_addr(void *buf, int index)
 	}
 
 	return (void *)item->buf;
-}
-
-int oplus_chg_ic_get_item_data_size(const void *buf, int index)
-{
-	struct oplus_chg_ic_func_date *debug_data;
-	struct oplus_chg_ic_func_date_item *item;
-	size_t item_size = 0;
-	int i;
-
-	debug_data = (struct oplus_chg_ic_func_date *)buf;
-	for (i = 0; i <= index; i++) {
-		item = (struct oplus_chg_ic_func_date_item *)(debug_data->buf + item_size);
-		item_size += (item->size + sizeof(struct oplus_chg_ic_func_date_item));
-	}
-
-	return item->size;
 }
 
 void oplus_chg_ic_debug_data_init(void *buf, int argc)

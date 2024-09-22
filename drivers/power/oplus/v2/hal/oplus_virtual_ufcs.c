@@ -131,7 +131,7 @@ static int oplus_chg_ufcs_hard_reset(struct oplus_chg_ic_dev *ic_dev)
 	}
 	chip = oplus_chg_ic_get_drvdata(ic_dev);
 
-	rc = ufcs_source_hard_reset(chip->ufcs);
+	rc = ufcs_intf_source_hard_reset(chip->ufcs);
 
 	return rc;
 }

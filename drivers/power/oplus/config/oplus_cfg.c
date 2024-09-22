@@ -27,6 +27,9 @@ static const char * const oplus_param_type_name[] = {
 	[OPLUS_CHG_VOOC_NORMAL_PARAM]	= "VoocChargeConfig",
 	[OPLUS_CHG_VOOCPHY_PARAM]	= "VoocphyConfig",
 	[OPLUS_CHG_PPS_PARAM]		= "PpsChargeConfig",
+	[OPLUS_CHG_UFCS_PARAM]		= "UfcsChargeConfig",
+	[OPLUS_CHG_CPA_PARAM]		= "CpaChargeConfig",
+	[OPLUS_CHG_IMP_PARAM]		= "ImpChargeConfig",
 	[OPLUS_CFG_PARAM_MAX]		= "Invalid",
 };
 

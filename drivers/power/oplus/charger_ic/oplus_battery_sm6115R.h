@@ -958,8 +958,11 @@ int smblib_force_vbus_voltage(struct smb_charger *chg, u8 val);
 int smblib_get_irq_status(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_get_qc3_main_icl_offset(struct smb_charger *chg, int *offset_ua);
-int oplus_get_subboard_temp(void);
+
 int smblib_init(struct smb_charger *chg);
 int smblib_deinit(struct smb_charger *chg);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+void oplus_chg_pps_get_source_cap(void);
+#endif
 
 #endif /* __OPLUS_BATTERY_QCOM_SM6115Q_H_ */

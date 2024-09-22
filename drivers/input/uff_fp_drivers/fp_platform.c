@@ -30,6 +30,19 @@ static int fingerprint_ldo_disable(unsigned int ldo_num, unsigned int mv)
 }
 #endif
 
+#if defined(CONFIG_FP_SUPPLY_MODE_LDO_DIO8018)
+#include "dio8018.h"
+#else
+static int DIO8018_cam_ldo_set_voltage(unsigned int ldo_num, int mv)
+{
+    return 0;
+}
+static int DIO8018_cam_ldo_disable(unsigned int ldo_num)
+{
+    return 0;
+}
+#endif
+
 static DEFINE_MUTEX(g_power_lock);
 
 static int vreg_setup(struct fp_dev *fp_dev, fp_power_info_t *pwr_info, bool enable) {
@@ -243,6 +256,7 @@ int fp_parse_pwr_list(struct fp_dev *fp_dev) {
                     pwr_list[child_node_index].poweron_level);
                 break;
             case FP_POWER_MODE_WL2868C:
+            case FP_POWER_MODE_DIO8018:
                 ret = of_property_read_u32(np, LDO_CONFIG_NODE, &fp_dev->ldo_voltage);
                 if (ret) {
                     pr_err("failed to request %s, ret = %d\n", LDO_CONFIG_NODE, ret);
@@ -518,6 +532,11 @@ int fp_power_on(struct fp_dev *fp_dev) {
                 pr_info("---- power on wl2868c ldo ----\n");
                 pr_info("ldo-num: %u ldo_voltage: %u\n", fp_dev->ldo_num, fp_dev->ldo_voltage);
                 break;
+            case FP_POWER_MODE_DIO8018:
+                rc = DIO8018_cam_ldo_set_voltage(fp_dev->ldo_num, fp_dev->ldo_voltage);
+                pr_info("---- power on DIO8018 ldo ----\n");
+                pr_info("ldo-num: %u ldo_voltage: %u\n", fp_dev->ldo_num, fp_dev->ldo_voltage);
+                break;
             case FP_POWER_MODE_NOT_SET:
             default:
                 rc = -1;
@@ -563,6 +582,11 @@ int fp_power_off(struct fp_dev *fp_dev) {
             case FP_POWER_MODE_WL2868C:
                 rc = fingerprint_ldo_disable(fp_dev->ldo_num, 0);
                 pr_info("---- power off wl2868c ldo ----\n");
+                pr_info("ldo_num: %u\n", fp_dev->ldo_num);
+                break;
+            case FP_POWER_MODE_DIO8018:
+                rc = DIO8018_cam_ldo_disable(fp_dev->ldo_num);
+                pr_info("---- power off DIO8018 ldo ----\n");
                 pr_info("ldo_num: %u\n", fp_dev->ldo_num);
                 break;
             case FP_POWER_MODE_NOT_SET:

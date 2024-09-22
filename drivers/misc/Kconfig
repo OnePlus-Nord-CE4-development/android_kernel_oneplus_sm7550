@@ -552,6 +552,11 @@ config HAPTIC_FEEDBACK
     help
       This option enables support for Haptic Driver Feedback.
 
+source "drivers/misc/aw8697_haptic/Kconfig"
+#ifdef OPLUS_FEATURE_SENSOR_CONSUMER_IR
+source "drivers/misc/oplus_consumer_ir/Kconfig"
+#endif /* OPLUS_FEATURE_SENSOR_CONSUMER_IR */
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"

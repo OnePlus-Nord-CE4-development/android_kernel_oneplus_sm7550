@@ -1694,7 +1694,8 @@ static void oplus_vooc_switch_check_work(struct work_struct *work)
 		chip->switch_retry_count = 0;
 		switch_normal_chg(chip->vooc_ic);
 		oplus_vooc_set_reset_sleep(chip->vooc_ic);
-		if (chg_type == OPLUS_CHG_USB_TYPE_DCP) {
+		if (chg_type == OPLUS_CHG_USB_TYPE_DCP ||
+		    chg_type == OPLUS_CHG_USB_TYPE_APPLE_BRICK_ID) {
 			if (!chip->cpa_support) {
 				chg_err("detect qc\n");
 				oplus_qc_check_setup_timer(chip, QC_CHECK_TIMER);
@@ -3221,6 +3222,7 @@ static void oplus_vooc_plugin_work(struct work_struct *work)
 		if (is_wired_charging_disable_votable_available(chip)) {
 			vote(chip->wired_charging_disable_votable,
 			     FASTCHG_VOTER, false, 0, false);
+			vote(chip->wired_charging_disable_votable, CP_ERR_VOTER, false, 0, false);
 		}
 		if (is_wired_charge_suspend_votable_available(chip)) {
 			vote(chip->wired_charge_suspend_votable, FASTCHG_VOTER,
@@ -5579,15 +5581,15 @@ static void oplus_vooc_shutdown(struct platform_device *pdev)
 		return;
 	}
 
-	if (is_wired_charge_suspend_votable_available(chip) &&
-	    chip->config.voocphy_support != ADSP_VOOCPHY &&
-	    chip->wired_online) {
+	if (chip->config.voocphy_support != ADSP_VOOCPHY && chip->wired_online) {
 		oplus_vooc_set_shutdown_mode(chip->vooc_ic);
-		vote(chip->wired_charge_suspend_votable, SHUTDOWN_VOTER, true, 1, false);
-		rc = set_chg_auto_mode(chip->vooc_ic, false);
-		chg_err("%s to quit auto mode rc= %d\n", rc == 0 ? "success" :"fail", rc);
-		msleep(1000);
-		vote(chip->wired_charge_suspend_votable, SHUTDOWN_VOTER, false, 0, false);
+		if (is_wired_charge_suspend_votable_available(chip)) {
+			vote(chip->wired_charge_suspend_votable, SHUTDOWN_VOTER, true, 1, false);
+			rc = set_chg_auto_mode(chip->vooc_ic, false);
+			chg_err("%s to quit auto mode rc= %d\n", rc == 0 ? "success" :"fail", rc);
+			msleep(1000);
+			vote(chip->wired_charge_suspend_votable, SHUTDOWN_VOTER, false, 0, false);
+		}
 	}
 }
 

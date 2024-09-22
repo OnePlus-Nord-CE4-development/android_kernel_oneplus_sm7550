@@ -475,6 +475,8 @@ static int battery_psy_get_prop(struct power_supply *psy,
 	union power_supply_propval wlsval = { 0 };
 	int rc = 0;
 	int bms_temp_compensation;
+	int batt_qmax_0 = 0;
+	int batt_qmax_1 = 0;
 	static int pre_batt_status = 0;
 	unsigned long cur_chg_time = 0;
 
@@ -586,6 +588,11 @@ static int battery_psy_get_prop(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
 		pval->intval = chip->batt_capacity_mah * 1000;
+		break;
+	case POWER_SUPPLY_PROP_ENERGY_FULL:
+		oplus_gauge_get_qmax(chip->gauge_topic, 0, &batt_qmax_0);
+		oplus_gauge_get_qmax(chip->gauge_topic, 1, &batt_qmax_1);
+		pval->intval = batt_qmax_0 < batt_qmax_1 ? batt_qmax_0 : batt_qmax_1;
 		break;
 	case POWER_SUPPLY_PROP_MODEL_NAME:
 		if (!chip->batt_auth || !chip->batt_hmac)
@@ -740,6 +747,7 @@ static enum power_supply_property battery_props[] = {
 	POWER_SUPPLY_PROP_CYCLE_COUNT,
 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
+	POWER_SUPPLY_PROP_ENERGY_FULL,
 	POWER_SUPPLY_PROP_MODEL_NAME,
 	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
 	POWER_SUPPLY_PROP_TIME_TO_FULL_NOW,

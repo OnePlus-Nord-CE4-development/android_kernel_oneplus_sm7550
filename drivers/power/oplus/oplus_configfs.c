@@ -30,6 +30,7 @@
 #include "oplus_battery_log.h"
 #include "bob_ic/oplus_tps6128xd.h"
 #include "oplus_chg_exception.h"
+#include "oplus_region_check.h"
 #ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 #include <soc/oplus/system/oplus_project.h>
 #endif
@@ -520,6 +521,49 @@ static ssize_t call_mode_store(struct device *dev, struct device_attribute *attr
 static DEVICE_ATTR_RW(call_mode);
 #endif /*CONFIG_OPLUS_CALL_MODE_SUPPORT*/
 
+static ssize_t gsm_call_ongoing_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct oplus_chg_chip *chip = NULL;
+
+	chip = (struct oplus_chg_chip *)dev_get_drvdata(oplus_battery_dir);
+	if (!chip) {
+		chg_err("chip is NULL\n");
+		return -EINVAL;
+	}
+
+	return sprintf(buf, "%d\n", chip->gsm_call_ongoing);
+}
+
+static ssize_t gsm_call_ongoing_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	int val = 0;
+	struct oplus_chg_chip *chip = NULL;
+	struct oplus_voocphy_manager *voocphy_chip = NULL;
+	if (oplus_chg_get_gsm_call_on() == true) {
+		chip = (struct oplus_chg_chip *)dev_get_drvdata(oplus_battery_dir);
+		if (!chip) {
+			chg_err("chip is NULL\n");
+			return -EINVAL;
+		}
+
+		oplus_voocphy_get_chip(&voocphy_chip);
+		if (!voocphy_chip)
+			return -EINVAL;
+
+		if (kstrtos32(buf, 0, &val)) {
+			chg_err("buf error\n");
+			return -EINVAL;
+		}
+		chip->gsm_call_ongoing = val;
+		chg_err("set val [%d]\n", chip->gsm_call_ongoing);
+
+		if (voocphy_chip->ops && voocphy_chip->ops->set_fix_mode)
+			voocphy_chip->ops->set_fix_mode(chip->gsm_call_ongoing);
+	}
+	return count;
+}
+static DEVICE_ATTR_RW(gsm_call_ongoing);
+
 static ssize_t charge_technology_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct oplus_chg_chip *chip = NULL;
@@ -529,6 +573,9 @@ static ssize_t charge_technology_show(struct device *dev, struct device_attribut
 		chg_err("chip is NULL\n");
 		return -EINVAL;
 	}
+
+	if (oplus_limit_svooc_current())
+		chip->vooc_project = chip->limit_current_area_vooc_project;
 
 	return sprintf(buf, "%d\n", chip->vooc_project);
 }
@@ -823,7 +870,10 @@ static ssize_t mmi_charging_enable_store(struct device *dev, struct device_attri
 			if (oplus_chg_get_voocphy_support() == ADSP_VOOCPHY) {
 				oplus_adsp_voocphy_turn_off();
 			} else {
-				if (!(((chip->pd_svooc == false &&
+				if ((oplus_pps_get_support_type() != PPS_SUPPORT_NOT) &&
+					oplus_pps_get_pps_fastchg_started()) {
+					oplus_pps_stop_mmi();
+				} else if (!(((chip->pd_svooc == false &&
 					chip->chg_ops->get_charger_subtype() == CHARGER_SUBTYPE_PD) ||
 					chip->chg_ops->get_charger_subtype() == CHARGER_SUBTYPE_QC) &&
 					!oplus_vooc_get_fastchg_started()))
@@ -849,7 +899,7 @@ static ssize_t mmi_charging_enable_store(struct device *dev, struct device_attri
 			if (oplus_voocphy_get_bidirect_cp_support()) {
 				oplus_voocphy_set_chg_auto_mode(false);
 			}
-			if (!chip->otg_online && !oplus_vooc_get_fastchg_started())
+			if (!chip->otg_online)
 				oplus_chg_turn_on_charging_in_work();
 			if (oplus_chg_get_voocphy_support() == ADSP_VOOCPHY) {
 				oplus_adsp_voocphy_turn_on();
@@ -1457,6 +1507,16 @@ static ssize_t pps_third_priority_show(struct device *dev, struct device_attribu
 }
 static DEVICE_ATTR_RO(pps_third_priority);
 
+static ssize_t limit_svooc_current_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int val = 0;
+
+	val = oplus_limit_svooc_current();
+	val = val < 0 ? 0 : val;
+
+	return sprintf(buf, "%d\n", val);
+}
+static DEVICE_ATTR_RO(limit_svooc_current);
 
 static ssize_t screen_off_by_batt_temp_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -1891,6 +1951,68 @@ static ssize_t slow_chg_en_store(struct device *dev, struct device_attribute *at
 }
 static DEVICE_ATTR_RW(slow_chg_en);
 
+#define GAGUE_INFO_PAGE_SIZE 1024
+static ssize_t gauge_info_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int len;
+	struct oplus_chg_chip *chip = NULL;
+
+	chip = (struct oplus_chg_chip *)dev_get_drvdata(oplus_battery_dir);
+	if (!chip) {
+		chg_err("chip is NULL\n");
+		return -EINVAL;
+	}
+
+	if (oplus_plat_gauge_is_support())
+		return -EINVAL;
+
+	oplus_gauge_get_device_name(buf, GAGUE_INFO_PAGE_SIZE);
+	len = strlen(buf);
+	snprintf(&(buf[len]), GAGUE_INFO_PAGE_SIZE - len, "$$main_gauge@@");
+	len = strlen(buf);
+	oplus_gauge_get_info(&(buf[len]), GAGUE_INFO_PAGE_SIZE - len);
+	if (oplus_gauge_get_sub_batt_soc() > 0) {
+		len = strlen(buf);
+		snprintf(&(buf[len]), GAGUE_INFO_PAGE_SIZE - len, "$$sub_gauge@@");
+		len = strlen(buf);
+		oplus_sub_gauge_get_info(&(buf[len]), GAGUE_INFO_PAGE_SIZE - len);
+	}
+	pr_info("gauge_info_len:%d, data:%s\n", strlen(buf), buf);
+	return strlen(buf);
+}
+static DEVICE_ATTR_RO(gauge_info);
+
+static ssize_t bqfs_status_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	bool status = false;
+	struct oplus_chg_chip *chip = NULL;
+
+	chip = (struct oplus_chg_chip *)dev_get_drvdata(oplus_battery_dir);
+	if (!chip) {
+		chg_err("chip is NULL\n");
+		return -EINVAL;
+	}
+
+	status = oplus_gauge_get_bqfs_status();
+
+	return sprintf(buf, "%d\n", status);
+}
+static DEVICE_ATTR_RO(bqfs_status);
+
+static ssize_t batt_temp_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct oplus_chg_chip *chip = NULL;
+
+	chip = (struct oplus_chg_chip *)dev_get_drvdata(oplus_battery_dir);
+	if (!chip) {
+		chg_err("chip is NULL\n");
+		return -EINVAL;
+	}
+
+	return sprintf(buf, "%d\n", chip->tbatt_temp);
+}
+static DEVICE_ATTR_RO(batt_temp);
+
 static struct device_attribute *oplus_battery_attributes[] = {
 	&dev_attr_authenticate,
 	&dev_attr_battery_cc,
@@ -1902,6 +2024,7 @@ static struct device_attribute *oplus_battery_attributes[] = {
 #ifdef CONFIG_OPLUS_CALL_MODE_SUPPORT
 	&dev_attr_call_mode,
 #endif
+	&dev_attr_gsm_call_ongoing,
 	&dev_attr_charge_technology,
 #ifdef CONFIG_OPLUS_CHIP_SOC_NODE
 	&dev_attr_chip_soc,
@@ -1947,6 +2070,7 @@ static struct device_attribute *oplus_battery_attributes[] = {
 	&dev_attr_ufcs_oplus_id,
 	&dev_attr_pps_third_support,
 	&dev_attr_pps_third_priority,
+	&dev_attr_limit_svooc_current,
 	&dev_attr_screen_off_by_batt_temp,
 	&dev_attr_bcc_parms,
 	&dev_attr_bcc_current,
@@ -1967,6 +2091,9 @@ static struct device_attribute *oplus_battery_attributes[] = {
 	&dev_attr_battery_log_content,
 	&dev_attr_pkg_name,
 	&dev_attr_slow_chg_en,
+	&dev_attr_gauge_info,
+	&dev_attr_bqfs_status,
+	&dev_attr_batt_temp,
 	NULL
 };
 
@@ -2616,78 +2743,6 @@ static ssize_t time_zone_store(struct device *dev,
 }
 static DEVICE_ATTR_RW(time_zone);
 
-static ssize_t deep_dischg_counts_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct oplus_configfs_device *chip = dev->driver_data;
-	int counts = 0;
-
-	if (!chip) {
-		chg_err("chip is NULL\n");
-		return -EINVAL;
-	}
-
-	if (counts < 0)
-		return counts;
-
-	return sprintf(buf, "%d\n", counts);
-}
-
-static ssize_t deep_dischg_counts_store(struct device *dev, struct device_attribute *attr,
-					const char *buf, size_t count)
-{
-	struct oplus_configfs_device *chip = dev->driver_data;
-	int val = 0;
-
-	if (!chip) {
-		chg_err("chip is NULL\n");
-		return -EINVAL;
-	}
-
-	if (kstrtos32(buf, 0, &val)) {
-		chg_err("buf error\n");
-		return -EINVAL;
-	}
-
-	return count;
-}
-static DEVICE_ATTR_RW(deep_dischg_counts);
-
-static ssize_t deep_dischg_count_cali_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct oplus_configfs_device *chip = dev->driver_data;
-	int counts = 0;
-
-	if (!chip) {
-		chg_err("chip is NULL\n");
-		return -EINVAL;
-	}
-
-	if (counts < 0)
-		return counts;
-
-	return sprintf(buf, "%d\n", counts);
-}
-
-static ssize_t deep_dischg_count_cali_store(struct device *dev, struct device_attribute *attr,
-					const char *buf, size_t count)
-{
-	struct oplus_configfs_device *chip = dev->driver_data;
-	int val = 0;
-
-	if (!chip) {
-		chg_err("chip is NULL\n");
-		return -EINVAL;
-	}
-
-	if (kstrtos32(buf, 0, &val)) {
-		chg_err("buf error\n");
-		return -EINVAL;
-	}
-
-	return count;
-}
-static DEVICE_ATTR_RW(deep_dischg_count_cali);
-
 static struct device_attribute *oplus_common_attributes[] = {
 #ifdef OPLUS_CHG_ADB_ROOT_ENABLE
 	&dev_attr_charge_parameter,
@@ -2702,8 +2757,6 @@ static struct device_attribute *oplus_common_attributes[] = {
 	&dev_attr_bob_status,
 	&dev_attr_time_zone,
 	&dev_attr_battlog_push_config,
-	&dev_attr_deep_dischg_counts,
-	&dev_attr_deep_dischg_count_cali,
 	NULL
 };
 #ifdef OPLUS_FEATURE_CHG_BASIC

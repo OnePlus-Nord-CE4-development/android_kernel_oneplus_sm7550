@@ -19,6 +19,10 @@
 #include <linux/wakelock.h>
 #endif
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+#include <linux/sched/clock.h>
+#endif
+
 #ifdef CONFIG_OPLUS_CHARGER_MTK
 #include <linux/i2c.h>
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
@@ -151,6 +155,8 @@
 #include "charger_ic/oplus_battery_sm6375.h"
 #elif defined CONFIG_OPLUS_SM6115R_CHARGER
 #include "charger_ic/oplus_battery_sm6375.h"
+#elif defined CONFIG_OPLUS_SM6375_KRN6P1_CHARGER
+#include "charger_ic/oplus_battery_sm6375.h"
 #else /* CONFIG_OPLUS_MSM8953_CHARGER */
 #include "charger_ic/oplus_battery_msm8976.h"
 #endif /* CONFIG_OPLUS_MSM8953_CHARGER */
@@ -163,6 +169,10 @@
 #elif IS_ENABLED(CONFIG_FB)
 #include <linux/notifier.h>
 #include <linux/fb.h>
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_CHG_TEST_KIT)
+#include "../test-kit/test-kit.h"
 #endif
 
 #if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_CHG_DRM_PANEL_NOTIFY)
@@ -415,6 +425,21 @@ enum {
 	PD_PPS_ACTIVE,
 };
 
+#if IS_ENABLED(CONFIG_OPLUS_CHG_TEST_KIT)
+enum cc_mode_type {
+	MODE_DEFAULT = 0,
+	MODE_SINK,
+	MODE_SRC,
+	MODE_DRP
+};
+enum situations_type {
+	SITUATION_DEFAULT = 0,
+	SITUATION_IDLE,
+	SITUATION_OTG,
+	SITUATION_CHARGING
+};
+#endif /* CONFIG_OPLUS_CHG_TEST_KIT */
+
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
 enum oplus_power_supply_type {
 	POWER_SUPPLY_TYPE_USB_HVDCP = 13,		/* High Voltage DCP */
@@ -588,6 +613,7 @@ typedef enum {
 	POWER_BANK_88W = 18,
 	POWER_BANK_55W = 19,
 	POWER_BANK_125W = 20,
+	POWER_BANK_45W = 21,
 	INVALID_VOOC_PROJECT,
 } OPLUS_VOOC_PROJECT_TYPE;
 
@@ -1190,6 +1216,7 @@ struct oplus_chg_chip {
 	int boot_reason;
 	int boot_mode;
 	int vooc_project;
+	int limit_current_area_vooc_project;
 	bool suspend_after_full;
 	bool check_batt_full_by_sw;
 	bool external_gauge;
@@ -1296,6 +1323,7 @@ struct oplus_chg_chip {
 	bool is_double_charger_support;
 	int pd_svooc;
 	int pd_chging;
+	int pps_to_pd_chging;
 	int soc_ajust;
 	int modify_soc;
 	ktime_t first_ktime;
@@ -1336,7 +1364,8 @@ struct oplus_chg_chip {
 	bool aicl_done;
 	int input_current_limit;
 	int charging_current;
-
+	bool gsm_call_on;
+	bool gsm_call_ongoing;
 	bool support_low_soc_unlimit;
 	int unlimit_soc;
 	bool force_psy_changed;
@@ -1406,6 +1435,9 @@ struct oplus_chg_chip {
 	oplus_chg_track_trigger cool_down_match_err_load_trigger;
 	struct delayed_work cool_down_match_err_load_trigger_work;
 	struct delayed_work soc_update_when_resume_work;
+#if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_CHG_DRM_PANEL_NOTIFY)
+	struct delayed_work panel_notify_reg_work;
+#endif
 
 	oplus_chg_track_trigger *mmi_chg_info_trigger;
 	oplus_chg_track_trigger *slow_chg_info_trigger;
@@ -1464,6 +1496,12 @@ struct oplus_chg_chip {
 	bool full_pre_ffc_judge;
 	int full_pre_ffc_mv;
 	bool boot_reset_adapter;
+#if IS_ENABLED(CONFIG_OPLUS_CHG_TEST_KIT)
+	struct test_feature *chg_switch1_gpio_test;
+	struct test_feature *chg_switch2_gpio_test;
+	struct test_feature *chg_uart_gpio_test;
+	struct test_feature *typec_port_test;
+#endif
 	bool usbin_abnormal_status;
 	bool support_check_usbin_status;
 	int check_usbin_from_adsp_cnt;
@@ -1493,6 +1531,9 @@ struct oplus_chg_chip {
 	bool use_audio_switch;
 	int soc_resume_sleep_time;
 	int track_gmtoff;
+
+	bool support_shipmode_in_chgic;
+	bool not_support_usb_btb;
 };
 
 #define TTF_UPDATE_UEVENT_BIT		BIT(30)
@@ -1878,8 +1919,12 @@ void oplus_chg_get_aging_ffc_offset(struct oplus_chg_chip *chip,
 int oplus_get_ccdetect_online(void);
 bool oplus_chg_get_led_status(void);
 int oplus_chg_adspvoocphy_get_abnormal_adapter_disconnect_cnt(void);
+#if IS_ENABLED(CONFIG_OPLUS_CHG_TEST_KIT)
+void oplus_test_kit_unregister(void);
+#endif
 int oplus_get_slow_chg_current(int batt_curve_current);
 int oplus_chg_track_upload_slow_chg_info(struct oplus_chg_chip *chip, int pct, int watt, int en);
 int oplus_chg_track_upload_mmi_chg_info(struct oplus_chg_chip *chip, int mmi_chg);
+bool oplus_chg_get_gsm_call_on(void);
 //#endif
 #endif /*_OPLUS_CHARGER_H_*/

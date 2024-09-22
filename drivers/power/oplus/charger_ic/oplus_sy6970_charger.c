@@ -179,6 +179,12 @@ module_param(disable_PD, bool, 0644);
 module_param(current_percent, int, 0644);
 module_param(dumpreg_by_irq, bool, 0644);
 static struct bq2589x *g_bq;
+static const char g_bq2589x_regdata_on_reset[] = {
+	0x48, 0x06, 0x1d, 0x1a, 0x20,
+	0x13, 0x5e, 0x9d, 0x03, 0x44,
+	0x73, 0x5e, 0x00, 0x12, 0x6d,
+	0x71, 0x47, 0x98, 0x00, 0x08, 0x0c
+};
 
 void oplus_wake_up_usbtemp_thread(void);
 
@@ -1327,6 +1333,16 @@ bq2589x_show_registers(struct device *dev, struct device_attribute *attr,
 	}
 
 	return idx;
+}
+
+void bq2589x_reset_registers(struct bq2589x *bq, const char *buf, int count)
+{
+	int reg;
+
+	for(reg = BQ2589X_REG_00; reg <= count; reg++) {
+		if (reg != BQ2589X_REG_06)
+			bq2589x_write_byte(bq, (unsigned char)reg, buf[reg]);
+	}
 }
 
 static ssize_t
@@ -2889,6 +2905,9 @@ static int bq2589x_charger_probe(struct i2c_client *client,
 		ret = -EINVAL;
 		goto err_parse_dt;
 	}
+
+	if (!bq->is_bq2589x)
+		bq2589x_reset_registers(bq, g_bq2589x_regdata_on_reset, BQ2589X_REG_14);
 
 	ret = bq2589x_init_device(bq);
 	if (ret) {

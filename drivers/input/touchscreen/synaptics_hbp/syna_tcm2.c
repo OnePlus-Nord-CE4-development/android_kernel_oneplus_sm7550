@@ -62,6 +62,14 @@
 #include "touchpanel_autotest/touchpanel_autotest.h"
 #include "touch_comon_api/touch_comon_api.h"
 
+#ifndef CONFIG_REMOVE_OPLUS_FUNCTION
+#ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#include<mt-plat/mtk_boot_common.h>
+#else
+#include <soc/oplus/system/boot_mode.h>
+#endif
+#endif
+
 #include <linux/sched/signal.h> /* for function send_sig() */
 #if IS_ENABLED(CONFIG_DRM_OPLUS_PANEL_NOTIFY)
 #include <linux/msm_drm_notify.h>
@@ -134,7 +142,19 @@ static void syna_delta_read(struct seq_file *s, void *chip_data);
 static void syna_baseline_read(struct seq_file *s, void *chip_data);
 static void syna_main_register(struct seq_file *s, void *chip_data);
 static void syna_reserve_read(struct seq_file *s, void *chip_data);
+static void syna_tp_limit_data_write(void *chip_data, int count);
 static void syna_tcm_test_report(struct syna_tcm *tcm_info, u32 code);
+
+#ifndef CONFIG_REMOVE_OPLUS_FUNCTION
+#ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
+#ifndef CONFIG_OPLUS_MTK_DRM_GKI_NOTIFY
+extern enum boot_mode_t get_boot_mode(void);
+#endif
+#else
+extern int get_boot_mode(void);
+#endif
+#endif
+
 /**
  * syna_dev_update_lpwg_status()
  *
@@ -1017,6 +1037,61 @@ static bool monitor_irq_bus_ready(struct syna_tcm *tcm)
 	return true;
 }
 
+#define SYNA_TCM_DIFF_BUF_LENGTH   3360 /* tx*rx*2 + (tx+rx)*2 */
+#define SYNA_TCM_MAX_CHANNEL_NUM 49
+static void syna_get_diff_data_record(struct syna_tcm *tcm)
+{
+	int tx_num = tcm->tx_num;
+	int rx_num = tcm->rx_num;
+	int i = 0, j = 0;
+	u8 *pdata_8;
+	char buf[200];
+
+	if (!tcm) {
+		TP_INFO(tcm->tp_index, "%s:tcm is NULL pointer\n", __func__);
+		return;
+	}
+
+	if (!tcm->differ_read_every_frame) {
+		TP_INFO(tcm->tp_index, "%s:differ_read_every_frame is false\n", __func__);
+		return;
+	}
+
+	TPD_DEBUG("Header code = 0xaa, report size:%d, report length:%d\n",
+		tcm->event_data.buf_size, tcm->event_data.data_length);
+
+	pdata_8 = &tcm->event_data.buf[0];
+	if (tcm->event_data.data_length > SYNA_TCM_DIFF_BUF_LENGTH || tcm->event_data.data_length != (2 * (tx_num * rx_num + tx_num + rx_num)) || \
+			(tx_num > SYNA_TCM_MAX_CHANNEL_NUM) || (rx_num > SYNA_TCM_MAX_CHANNEL_NUM)) {
+		TP_INFO(tcm->tp_index, "%s:report length %d tx_num:%d rx_num:%d error\n", __func__, tcm->event_data.data_length, tx_num, rx_num);
+		return;
+	}
+
+	memset(buf, 0, sizeof(buf));
+	TPD_DEBUG("diff data\n");
+	for (i = 0; i < tx_num; i++) {
+		for (j = 0; j < rx_num; j++) {
+			snprintf(&buf[4 * j], 5, "%02x%02x", pdata_8[0], pdata_8[1]);
+			pdata_8 += 2;
+		}
+		TPD_DEBUG("diff_record:[%2d]%s", i, buf);
+	}
+	TPD_DEBUG("sc_nomal diff data:\n");
+	for (i = 0; i < rx_num; i++) {
+		snprintf(&buf[4 * i], 5, "%02x%02x", pdata_8[0], pdata_8[1]);
+		pdata_8 += 2;
+	}
+	TPD_DEBUG("diff_record:[RX]%s", buf);
+	for (i = 0; i < tx_num; i++) {
+		snprintf(&buf[4 * i], 5, "%02x%02x", pdata_8[0], pdata_8[1]);
+		pdata_8 += 2;
+	}
+	TPD_DEBUG("diff_record:[TX]%s", buf);
+	TPD_DEBUG("end\n");
+
+	return;
+}
+
 
 /**
  * syna_dev_isr()
@@ -1091,6 +1166,13 @@ static irqreturn_t syna_dev_isr(int irq, void *data)
 #endif
 	}
 #endif
+
+	if (tcm->tp_data_record_support) {
+		if (code == REPORT_DIFF) {
+			syna_get_diff_data_record(tcm);
+		}
+	}
+
 	/* report input event only when receiving a touch report */
 
 	if (code == REPORT_TOUCH) {
@@ -1779,6 +1861,15 @@ static void syna_speedup_resume(struct work_struct *work)
 
 		if (hw_if->ops_hw_reset) {
 			hw_if->ops_hw_reset(hw_if);
+
+			if (tcm->tp_data_record_support && tcm->differ_read_every_frame) {
+				retval = syna_tcm_set_dynamic_config(tcm->tcm_dev, 0xF3, 1, RESP_IN_ATTN);
+				if (retval < 0) {
+					LOGE("Fail to enable DC_SET_DIFFER_READ\n");
+				}
+				LOGI("Enable DC_SET_DIFFER_READ after resume\n");
+				tcm->differ_read_every_frame = true;
+			}
 		} else {
 			retval = syna_tcm_reset(tcm->tcm_dev);
 			if (retval < 0) {
@@ -2568,6 +2659,7 @@ static struct debug_info_proc_operations syna_debug_proc_ops = {
 	.baseline_blackscreen_read = syna_baseline_read,
 	.main_register_read = syna_main_register,
 	.reserve_read  = syna_reserve_read,
+	.tp_limit_data_write = syna_tp_limit_data_write,
 };
 
 static void syna_start_aging_test(void *chip_data)
@@ -2804,6 +2896,9 @@ static int init_chip_dts(struct device *dev, void *chip_data)
 
 	TP_INFO(tcm->tp_index, "dts_max_x = %d, dts_max_y = %d \n", tcm->dts_max_x, tcm->dts_max_y);
 
+	tcm->tp_data_record_support = of_property_read_bool(np, "tp_data_record_support");
+	TP_INFO(tcm->tp_index, "tp_data_record_support = %d \n", tcm->tp_data_record_support);
+
 	/* S3910_PANEL7 */
 	init_panel_config(dev, tcm);
 
@@ -3033,6 +3128,11 @@ static int syna_dev_probe(struct platform_device *pdev)
 		goto err_manufacture_info;
 	}
 
+#ifndef CONFIG_REMOVE_OPLUS_FUNCTION
+	/*step10 : FTM process*/
+	tcm->boot_mode = get_boot_mode();
+#endif
+
 	syna_tcm_buf_init(&tcm->event_data);
 
 	syna_pal_mutex_alloc(&tcm->tp_event_mutex);
@@ -3092,6 +3192,7 @@ static int syna_dev_probe(struct platform_device *pdev)
 	tcm->waiting_frame = 0;
 	tcm->use_short_frame_waiting = 0;
 	tcm->primary_timestamp_enabled = 1;
+	tcm->differ_read_every_frame = false;
 
 	platform_set_drvdata(pdev, tcm);
 
@@ -3400,6 +3501,7 @@ enum dynamic_config_id {
 	DC_GRIP_ABS_DARK_V = 0xE4,
 	DC_GRIP_ABS_DARK_SEL = 0xE5,
 	DC_SET_REPORT_FRE = 0xE6,
+	DC_SET_DIFFER_READ = 0xF3,
 	DC_GESTURE_MASK = 0xFE,
 	DC_LOW_TEMP_ENABLE = 0xFD,
 };
@@ -3970,6 +4072,40 @@ static void syna_reserve_read(struct seq_file *s, void *chip_data)
 		TPD_INFO("Failed to switch to normal\n");
 	}
 
+	return;
+}
+
+static void syna_tp_limit_data_write(void *chip_data, int count)
+{
+	int retval;
+	struct syna_tcm *tcm_info = (struct syna_tcm *)chip_data;
+
+	if (!tcm_info) {
+		TP_INFO(tcm_info->tp_index, "tcm_info is NULL pointer\n");
+		return;
+	}
+
+	if (!tcm_info->tp_data_record_support) {
+		TP_INFO(tcm_info->tp_index, "tp data record not support! \n");
+		return;
+	}
+
+	if (count) {
+		retval = syna_tcm_set_dynamic_config(tcm_info->tcm_dev, DC_SET_DIFFER_READ, 1, RESP_IN_ATTN);
+
+		if (retval < 0) {
+			TP_INFO(tcm_info->tp_index, "Failed to set differ read true\n");
+		}
+		tcm_info->differ_read_every_frame = true;
+	} else {
+		retval = syna_tcm_set_dynamic_config(tcm_info->tcm_dev, DC_SET_DIFFER_READ, 0, RESP_IN_ATTN);
+
+		if (retval < 0) {
+			TP_INFO(tcm_info->tp_index, "Failed to set differ read false\n");
+		}
+		tcm_info->differ_read_every_frame = false;
+	}
+	TP_INFO(tcm_info->tp_index, "tp data record set to %u\n", count);
 	return;
 }
 

@@ -234,7 +234,6 @@
 
 #define ZY602_MAC_CELL_DOD0_EN_ADDR		0x00
 #define ZY602_MAC_CELL_DOD0_CMD			0x00E3
-
 #define ZY602_MAC_CELL_DOD0_ADDR		0x40
 #define ZY602_MAC_CELL_DOD0_SIZE		12
 
@@ -272,28 +271,6 @@
 #define BQ28Z610_DEVICE_CHEMISTRY_CMD		0x4B
 #define BQ28Z610_DEVICE_CHEMISTRY_ADDR		0x40
 #define BQ28Z610_DEVICE_CHEMISTRY_SIZE		4
-
-#define BQ28Z610_DEEP_DISCHG_CHECK 		0xFF
-#define BQ28Z610_DEEP_DISCHG_NUM_CMD		0x4082
-#define BQ28Z610_DEEP_DISCHG_NAME_CMD		0x004A
-#define BQ28Z610_DEEP_DISCHG_SIZE		9
-#define BQ28Z610_DEEP_DISCHG_CEHECK_SIZE	11
-#define BQ28Z610_TERM_VOLT_CMD			0x45BE
-#define BQ28Z610_TERM_VOLT_SIZE			4
-#define BQ28Z610_TERM_VOLT_S_CMD		0x45C3
-#define BQ28Z610_TERM_VOLT_CHECK_ADDR		0x60
-#define BQ28Z610_TERM_VOLT_CHECK_SIZE		6
-#define BQ28Z610_DEEP_DISCHG_SHIFT_MASK		8
-
-#define BQ28Z610_BATT_SN_EN_ADDR		0x3E
-#define BQ28Z610_BATT_SN_CMD			0x004C
-#define BQ28Z610_BATT_SN_READ_BUF_LEN		22
-#define BQ28Z610_BATT_SN_NO_CHECKSUM		0x00
-#define BQ28Z610_BATT_SN_RETRY_MAX		3
-
-#define ZY0602_BATT_SN_EN_ADDR			0x3F
-#define ZY0602_BATT_SN_READ_ADDR		0x40
-#define ZY0602_BATT_SN_READ_BUF_LEN		32
 
 #define ZY0603_CMDMASK_ALTMAC_R			0x08000000
 #define ZY0603_CMDMASK_ALTMAC_W			0x88000000
@@ -543,7 +520,6 @@ struct chip_bq27541 {
 	const u8 **afi_buf;
 	unsigned int *afi_buf_len;
 	bool batt_bq28z610;
-	bool batt_bq27z561;
 	bool batt_zy0603;
 	bool bq28z610_need_balancing;
 	bool enable_sleep_mode;
@@ -587,12 +563,9 @@ struct chip_bq27541 {
 	struct pinctrl_state *id_pull_up;
 	struct pinctrl_state *id_pull_down;
 	int id_gpio;
-	int id_match_status;
-	int id_value;
 #if IS_ENABLED(CONFIG_OPLUS_CHG_TEST_KIT)
 	struct test_feature *battery_id_gpio_test;
 #endif
-	struct battery_manufacture_info battinfo;
 };
 
 extern bool oplus_gauge_ic_chip_is_null(

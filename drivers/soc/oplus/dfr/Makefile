@@ -11,8 +11,6 @@ obj-$(CONFIG_OPLUS_FEATURE_DUMP_DEVICE_INFO)	+=  qcom/dump_device_info/
 obj-$(CONFIG_OPLUS_FEATURE_DUMP_REASON)	+=  qcom/dump_reason/
 #endif /* OPLUS_FEATURE_DUMP_REASON */
 
-# MTK platform feature
-
 # common feature
 #ifdef OPLUS_FEATURE_THEIA
 obj-$(CONFIG_OPLUS_FEATURE_THEIA) += common/theia/

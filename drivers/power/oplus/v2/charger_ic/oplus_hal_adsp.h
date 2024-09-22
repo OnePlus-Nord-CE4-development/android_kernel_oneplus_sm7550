@@ -24,7 +24,6 @@
 #include <oplus_chg_ic.h>
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
-#include <oplus_mms_gauge.h>
 #ifndef CONFIG_FB
 #define CONFIG_FB
 #endif
@@ -147,7 +146,6 @@ enum oplus_ap_message_id {
 	AP_MESSAGE_ACK,
 	AP_MESSAGE_GET_GAUGE_REG_INFO,
 	AP_MESSAGE_GET_GAUGE_CALIB_TIME,
-	AP_MESSAGE_GET_GAUGE_BATTINFO,
 	AP_MESSAGE_MAX_SIZE = 32,
 };
 #endif
@@ -300,13 +298,9 @@ enum usb_property_id {
 	USB_GET_DEV_INFO_L,
 	USB_GET_DEV_INFO_H,
 	USB_SET_WD_TIME,
-	USB_GET_PDO_INFO_CURR,
-	USB_GET_PDO_INFO_VOLT,
-	USB_GET_PDO_INFO_STEP,
 	USB_SET_EXIT,
 	USB_GET_SRC_INFO_L,
 	USB_GET_SRC_INFO_H,
-	USB_SET_GET_SRC,
 #endif /*OPLUS_FEATURE_CHG_BASIC*/
 	USB_PROP_MAX,
 };
@@ -513,6 +507,7 @@ struct battery_chg_dev {
 	struct oplus_chg_ic_dev		*misc_ic;
 	struct oplus_chg_ic_dev		*pps_ic;
 	struct oplus_mms		*vooc_topic;
+	struct oplus_mms		*cpa_topic;
 	struct oplus_chg_ic_dev		*ufcs_ic;
 	struct oplus_impedance_node	*input_imp_node;
 	struct oplus_mms		*common_topic;
@@ -589,6 +584,7 @@ struct battery_chg_dev {
 	struct delayed_work wait_wired_charge_off;
 	bool wls_fw_update;
 	int batt_num;
+	bool voocphy_bidirect_cp_support;
 	bool cid_status;
 	atomic_t suspended;
 	bool wls_boost_soft_start;
@@ -638,7 +634,6 @@ struct battery_chg_dev {
 
 	struct regmap *regmap;
 	struct delayed_work get_regmap_work;
-	struct battery_manufacture_info battinfo;
 #endif
 };
 

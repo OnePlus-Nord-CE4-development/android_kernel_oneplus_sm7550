@@ -9,6 +9,10 @@
 #include <linux/list.h>
 #include <linux/device.h>
 
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+#include <oplus_cfg.h>
+#endif
+
 struct oplus_chg_strategy;
 
 enum {
@@ -23,6 +27,9 @@ struct oplus_chg_strategy_desc {
 	struct oplus_chg_strategy *(*strategy_alloc)(unsigned char *buf,
 						     size_t size);
 	struct oplus_chg_strategy *(*strategy_alloc_by_node)(struct device_node *node);
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+	struct oplus_chg_strategy *(*strategy_alloc_by_param_head)(const char *node_name, struct oplus_param_head *head);
+#endif
 	int (*strategy_release)(struct oplus_chg_strategy *strategy);
 	int (*strategy_init)(struct oplus_chg_strategy *strategy);
 	int (*strategy_get_data)(struct oplus_chg_strategy *strategy, void *ret);
@@ -37,6 +44,10 @@ struct oplus_chg_strategy *
 oplus_chg_strategy_alloc(const char *name, unsigned char *buf, size_t size);
 struct oplus_chg_strategy *
 oplus_chg_strategy_alloc_by_node(const char *name, struct device_node *node);
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+struct oplus_chg_strategy *
+oplus_chg_strategy_alloc_by_param_head(const char *name, const char *node_name, struct oplus_param_head *head);
+#endif
 int oplus_chg_strategy_init(struct oplus_chg_strategy *strategy);
 int oplus_chg_strategy_release(struct oplus_chg_strategy *strategy);
 int oplus_chg_strategy_get_data(struct oplus_chg_strategy *strategy, void *ret);

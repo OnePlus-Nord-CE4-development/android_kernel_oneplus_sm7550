@@ -81,10 +81,7 @@
                 "OPLUS_IC_ERR_MOS_ERROR",
                 "OPLUS_IC_ERR_OFFLINE",
                 "OPLUS_IC_ERR_UFCS",
-                "OPLUS_IC_ERR_GAN_MOS_ERROR",
-                "OPLUS_IC_ERR_NTC",
-                "OPLUS_IC_ERR_BYB_ID",
-                "OPLUS_IC_ERR_BATT_ID"
+                "OPLUS_IC_ERR_GAN_MOS_ERROR"
             ]
         },
         {
@@ -118,18 +115,6 @@
                 "UFCS_ERR_READ",
                 "UFCS_ERR_WRITE",
                 "UFCS_ERR_REG_DUMP"
-            ]
-        },
-        {
-            "name": "oplus_chg_ic_gpio_status",
-            "desc":{
-                "zh": "GPIO状态枚举值"
-            },
-            "list": [
-                "GPIO_STATUS_NC",
-                "GPIO_STATUS_PD",
-                "GPIO_STATUS_PU",
-                "GPIO_STATUS_NOT_SUPPORT"
             ]
         },
         {

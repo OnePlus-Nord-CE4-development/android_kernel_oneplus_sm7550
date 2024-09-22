@@ -16,7 +16,7 @@
 	} while (0)
 
 struct pwrkey_monitor_data g_bright_data = {
-	.is_panic = 0,
+	.is_panic = 1,
 	.status = BRIGHT_STATUS_INIT,
 	.blank = THEIA_PANEL_UNBLANK_VALUE,
 	.timeout_ms = BRIGHT_SLOW_TIMEOUT_MS,
@@ -39,6 +39,7 @@ static char bright_last_skip_block_stages[][64] = {
 static char bright_skip_stages[][64] = {
 	{ "POWER_wakeUpInternal" }, /* quick press powerkey, power decide wakeup when bright check, skip */
 	{ "POWERKEY_wakeUpFromPowerKey" }, /* quick press powerkey, power decide wakeup when bright check, skip */
+	{ "LIGHT_setScreenState_2_ON" }, /* Bright screen stage caused by application appears in the screen extinguishing process, skip */
 	{ "CANCELED_" }, /* if CANCELED_ event write in bright check stage, skip */
 };
 
@@ -153,9 +154,6 @@ static bool is_need_skip(void)
 		return true;
 
 	if (is_bright_contain_skip_stage())
-		return true;
-
-	if (is_slowkernel_skip())
 		return true;
 
 	return false;

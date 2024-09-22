@@ -57,6 +57,10 @@ ccflags-$(CONFIG_DRM_MEDIATEK_V2) += -DCONFIG_DRM_MEDIATEK_V2
 ccflags-$(CONFIG_FP_SUPPLY_MODE_LDO) += -I$(srctree)/drivers/misc/mediatek/wl2868c
 ccflags-$(CONFIG_FP_SUPPLY_MODE_LDO) += -DCONFIG_FP_SUPPLY_MODE_LDO
 
+# DIO8018 power supply
+ccflags-$(CONFIG_FP_SUPPLY_MODE_LDO_DIO8018) += -I$(srctree)/drivers/misc/mediatek/pmic/pmic_ldo_set
+ccflags-$(CONFIG_FP_SUPPLY_MODE_LDO_DIO8018) += -DCONFIG_FP_SUPPLY_MODE_LDO_DIO8018
+
 ifeq ($(CONFIG_OPLUS_FINGERPRINT_GKI_ENABLE),y)
 #tp for gki
 ccflags-y += -I$(srctree)/../vendor/oplus/kernel/touchpanel/oplus_touchscreen_v2/touchpanel_notify

@@ -38,6 +38,7 @@ int fsa4480_unreg_notifier(struct notifier_block *nb,
 int fsa4480_get_chip_vendor(struct device_node *node);
 int fsa4480_check_cross_conn(struct device_node *node);
 #endif /* OPLUS_ARCH_EXTENDS */
+
 #else
 static inline int fsa4480_switch_event(struct device_node *node,
 				       enum fsa_function event)

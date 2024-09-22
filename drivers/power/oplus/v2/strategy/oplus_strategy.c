@@ -113,6 +113,48 @@ oplus_chg_strategy_alloc_by_node(const char *name, struct device_node *node)
 	return strategy;
 }
 
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+struct oplus_chg_strategy *
+oplus_chg_strategy_alloc_by_param_head(const char *name, const char *node_name, struct oplus_param_head *head)
+{
+	struct oplus_chg_strategy *strategy;
+	struct oplus_chg_strategy_desc *desc;
+
+	if (name == NULL) {
+		chg_err("name is NULL\n");
+		return NULL;
+	}
+	if (node_name == NULL) {
+		chg_err("node_name is NULL\n");
+		return NULL;
+	}
+	if (head == NULL) {
+		chg_err("head is NULL\n");
+		return NULL;
+	}
+
+	desc = strategy_desc_find_by_name(name);
+	if (desc == NULL) {
+		chg_err("No strategy with name %s was found\n", name);
+		return NULL;
+	}
+
+	if (desc->strategy_alloc_by_param_head == NULL) {
+		chg_err("%s: strategy_alloc_by_param_head method not found\n", name);
+		return NULL;
+	}
+
+	strategy = desc->strategy_alloc_by_param_head(node_name, head);
+	if (IS_ERR_OR_NULL(strategy)) {
+		chg_err("%s strategy alloc error, rc=%ld\n", name, PTR_ERR(strategy));
+		return NULL;
+	}
+	strategy->desc = desc;
+
+	return strategy;
+}
+#endif
+
 int oplus_chg_strategy_release(struct oplus_chg_strategy *strategy)
 {
 	if (strategy == NULL) {

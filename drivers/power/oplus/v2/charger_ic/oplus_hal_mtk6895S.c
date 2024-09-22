@@ -59,16 +59,51 @@
 #include <oplus_chg_voter.h>
 #include <tcpm.h>
 #include <linux/thermal.h>
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#include <linux/usb/typec.h>
+#include <oplus_chg_pps.h>
+
+static int oplus_chg_set_pps_config(struct oplus_chg_ic_dev *ic_dev, int vbus_mv, int ibus_ma);
+static int oplus_pps_get_authentiate(struct oplus_chg_ic_dev *ic_dev);
+static int oplus_get_pps_info(struct oplus_chg_ic_dev *ic_dev, u32 *pdo, int num);
+static int oplus_chg_get_pps_status(struct oplus_chg_ic_dev *ic_dev, u32 *src_info);
+#endif /* OPLUS_FEATURE_CHG_BASIC */
 
 #define POWER_SUPPLY_TYPE_USB_HVDCP 13
-#define OPLUS_CHG_PULL_UP_VOLT_THR    7500
+#define OPLUS_CHG_PULL_UP_VOLT_THR  7500
 
-#define AICL_POINT_VOL_9V 7600
-#define AICL_POINT_VOL_5V 4140
+#define AICL_POINT_VOL_9V           7600
+#define AICL_POINT_SWITCH_THRE		7500
+#define DUAL_BAT_AICL_POINT_VOL_9V  8500
+#define AICL_POINT_VOL_5V           4140
 #define HW_AICL_POINT_VOL_5V_PHASE1 4440
 #define HW_AICL_POINT_VOL_5V_PHASE2 4520
 #define SW_AICL_POINT_VOL_5V_PHASE1 4500
 #define SW_AICL_POINT_VOL_5V_PHASE2 4535
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#define OPLUS_SVID 		    0x22D9
+#define OPLUS_UVDM_AUTH_CMD	    0x1F
+#define OPLUS_UVDM_POWER_CMD	    0x1
+#define OPLUS_UVDM_EXAPDO_CMD	    0x2
+
+#define PPS_RANDOM_NUMBER	    4
+#define NO_OF_DATA_OBJECTS_MAX      7
+#define PPS_KEY_COUNT		    4
+
+static uint32_t pps_random[PPS_RANDOM_NUMBER] = { 1111, 2222, 3333, 4444 };
+static uint32_t pps_adapter_result[NO_OF_DATA_OBJECTS_MAX] = { 0 };
+static uint32_t pps_phone_result[NO_OF_DATA_OBJECTS_MAX] = { 0 };
+
+static uint32_t tea_delta = 0;
+static uint32_t publick_key[4] = { 0 };
+static uint32_t private_key1[4] = { 0 };
+static uint32_t private_key2[4] = { 0 };
+
+static int enable_pps = 0;
+module_param(enable_pps, int, 0644);
+MODULE_PARM_DESC(enable_pps, "debug enable pps");
+#endif /* OPLUS_FEATURE_CHG_BASIC */
 
 static struct mtk_charger *pinfo;
 
@@ -4017,7 +4052,6 @@ trigger_irq:
 	return 0;
 }
 
-
 static int pd_tcp_notifier_call(struct notifier_block *pnb,
 				unsigned long event, void *data)
 {
@@ -4352,6 +4386,7 @@ static int oplus_mt6375_set_aicl_point(struct oplus_chg_ic_dev *ic_dev, int vbat
 	struct charger_device *chg = NULL;
 	struct mtk_charger *info;
 	int chg_vol = 0;
+	int aicl_point = AICL_POINT_VOL_9V;
 
 	if (!ic_dev) {
 		chg_err("set aicl_point fail, ic_dev is null\n");
@@ -4370,11 +4405,16 @@ static int oplus_mt6375_set_aicl_point(struct oplus_chg_ic_dev *ic_dev, int vbat
 		return -ENODEV;
 	}
 
+	if (oplus_gauge_get_batt_num() == 1)
+		aicl_point = AICL_POINT_VOL_9V;
+	else
+		aicl_point = DUAL_BAT_AICL_POINT_VOL_9V;
+
 	chg_vol = battery_meter_get_charger_voltage();
-	if (chg_vol > AICL_POINT_VOL_9V) {
-		hw_aicl_point = AICL_POINT_VOL_9V;
+	if (chg_vol > AICL_POINT_SWITCH_THRE) {
+		hw_aicl_point = aicl_point;
 	} else {
-		if (hw_aicl_point == AICL_POINT_VOL_9V)
+		if (hw_aicl_point == AICL_POINT_VOL_9V || hw_aicl_point == DUAL_BAT_AICL_POINT_VOL_9V)
 			hw_aicl_point = HW_AICL_POINT_VOL_5V_PHASE1;
 		if (hw_aicl_point == HW_AICL_POINT_VOL_5V_PHASE1 && vbatt > AICL_POINT_VOL_5V)
 			hw_aicl_point = HW_AICL_POINT_VOL_5V_PHASE2;
@@ -4416,10 +4456,23 @@ static int oplus_mt6375_input_current_limit_write(struct mtk_charger *info, int 
 	int i = 0;
 	int chg_vol = 0;
 	int aicl_point = 0;
+	int aicl_point_temp = AICL_POINT_VOL_9V;
 	int chg_type = oplus_wired_get_chg_type();
 	struct charger_device *chg = info->chg1_dev;
 	int batt_volt;
 	union mms_msg_data data = {0};
+
+	for (i = ARRAY_SIZE(usb_icl) - 1; i >= 0; i--) {
+		if (usb_icl[i] <= value)
+			break;
+		else if (i == 0)
+			break;
+	}
+
+	if (oplus_gauge_get_batt_num() == 1)
+		aicl_point_temp = AICL_POINT_VOL_9V;
+	else
+		aicl_point_temp = DUAL_BAT_AICL_POINT_VOL_9V;
 
 	chg_info("usb input max current limit= %d setting %02x\n", value, i);
 	chg_vol = battery_meter_get_charger_voltage();
@@ -4428,9 +4481,9 @@ static int oplus_mt6375_input_current_limit_write(struct mtk_charger *info, int 
 					GAUGE_ITEM_VOL_MAX, &data, false);
 		batt_volt = data.intval;
 
-		if (chg_vol > AICL_POINT_VOL_9V &&
+		if (chg_vol > aicl_point_temp &&
 		    (chg_type == OPLUS_CHG_USB_TYPE_PD || chg_type == OPLUS_CHG_USB_TYPE_QC2)) {
-			aicl_point = AICL_POINT_VOL_9V;
+			aicl_point = aicl_point_temp;
 		} else {
 			if (batt_volt > AICL_POINT_VOL_5V)
 				aicl_point = SW_AICL_POINT_VOL_5V_PHASE2;
@@ -5074,11 +5127,22 @@ static int mtk_chg_get_charger_type(struct oplus_chg_ic_dev *ic_dev, int *type)
 		*type = OPLUS_CHG_USB_TYPE_UNKNOWN;
 		break;
 	}
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (chip->pd_type == MTK_PD_CONNECT_PE_READY_SNK ||
+	    chip->pd_type == MTK_PD_CONNECT_PE_READY_SNK_PD30) {
+		*type = OPLUS_CHG_USB_TYPE_PD;
+	} else if (chip->pd_type == MTK_PD_CONNECT_PE_READY_SNK_APDO) {
+		if (enable_pps)
+			*type = OPLUS_CHG_USB_TYPE_PD_PPS;
+		else
+			*type = OPLUS_CHG_USB_TYPE_PD;
+	}
+#else
 	if (chip->pd_type == MTK_PD_CONNECT_PE_READY_SNK ||
 			chip->pd_type == MTK_PD_CONNECT_PE_READY_SNK_PD30||
 			chip->pd_type == MTK_PD_CONNECT_PE_READY_SNK_APDO)
 		*type = OPLUS_CHG_USB_TYPE_PD;
+#endif /* OPLUS_FEATURE_CHG_BASIC */
 
 	if (*type != OPLUS_CHG_USB_TYPE_UNKNOWN && !oplus_pd_without_usb())
 		*type = OPLUS_CHG_USB_TYPE_PD_SDP;
@@ -5089,9 +5153,17 @@ static int mtk_chg_get_charger_type(struct oplus_chg_ic_dev *ic_dev, int *type)
 #endif
 	if (!chip->tcpc)
 		chip->tcpc = tcpc_dev_get_by_name("type_c_port0");
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (charger_type == POWER_SUPPLY_TYPE_USB_DCP && chip->tcpc &&
+	    tcpm_inquire_pd_connected(chip->tcpc)) {
+		if (*type != OPLUS_CHG_USB_TYPE_PD_PPS && *type != OPLUS_CHG_USB_TYPE_PD)
+			*type = OPLUS_CHG_USB_TYPE_PD;
+	}
+#else
 	if (charger_type == POWER_SUPPLY_TYPE_USB_DCP && chip->tcpc &&
 	    tcpm_inquire_pd_connected(chip->tcpc))
 		*type = OPLUS_CHG_USB_TYPE_PD;
+#endif /* OPLUS_FEATURE_CHG_BASIC */
 
 	return 0;
 }
@@ -6424,7 +6496,75 @@ bool oplus_tchg_01c_precision(void)
 	return pinfo->support_ntc_01c_precision;
 }
 EXPORT_SYMBOL(oplus_tchg_01c_precision);
-#endif
+
+static int oplus_chg_cp_pps_init(struct oplus_chg_ic_dev *ic_dev)
+{
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+	ic_dev->online = true;
+	oplus_chg_ic_virq_trigger(ic_dev, OPLUS_IC_VIRQ_ONLINE);
+
+	return 0;
+}
+
+static int oplus_chg_cp_pps_exit(struct oplus_chg_ic_dev *ic_dev)
+{
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+	ic_dev->online = false;
+	oplus_chg_ic_virq_trigger(ic_dev, OPLUS_IC_VIRQ_OFFLINE);
+
+	return 0;
+}
+
+static void *oplus_chg_cp_pps_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplus_chg_ic_func func_id)
+{
+	void *func = NULL;
+
+	if (!ic_dev->online && (func_id != OPLUS_IC_FUNC_INIT) &&
+	    (func_id != OPLUS_IC_FUNC_EXIT)) {
+		chg_err("%s is offline\n", ic_dev->name);
+		return NULL;
+	}
+
+	switch (func_id) {
+	case OPLUS_IC_FUNC_INIT:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_INIT, oplus_chg_cp_pps_init);
+		break;
+	case OPLUS_IC_FUNC_EXIT:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_EXIT, oplus_chg_cp_pps_exit);
+		break;
+	case OPLUS_IC_FUNC_PPS_PDO_SET:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_PPS_PDO_SET, oplus_chg_set_pps_config);
+		break;
+	case OPLUS_IC_FUNC_PPS_VERIFY_ADAPTER:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_PPS_VERIFY_ADAPTER, oplus_pps_get_authentiate);
+		break;
+	case OPLUS_IC_FUNC_PPS_GET_PDO_INFO:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_PPS_GET_PDO_INFO, oplus_get_pps_info);
+		break;
+	case OPLUS_IC_FUNC_GET_PPS_STATUS:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GET_PPS_STATUS, oplus_chg_get_pps_status);
+		break;
+	default:
+		chg_err("this func(=%d) is not supported\n", func_id);
+		func = NULL;
+		break;
+	}
+
+	return func;
+}
+
+struct oplus_chg_ic_virq oplus_chg_cp_pps_virq_table[] = {
+	{ .virq_id = OPLUS_IC_VIRQ_ERR },
+	{ .virq_id = OPLUS_IC_VIRQ_ONLINE },
+	{ .virq_id = OPLUS_IC_VIRQ_OFFLINE },
+};
+#endif /* OPLUS_FEATURE_CHG_BASIC */
 
 static int oplus_mtk_ic_register(struct device *dev, struct mtk_charger *info)
 {
@@ -6496,6 +6636,13 @@ static int oplus_mtk_ic_register(struct device *dev, struct mtk_charger *info)
 			ic_cfg.virq_data = oplus_chg_mt6895_gauge_virq_table;
 			ic_cfg.virq_num = ARRAY_SIZE(oplus_chg_mt6895_gauge_virq_table);
 			break;
+		case OPLUS_CHG_IC_PPS:
+			snprintf(ic_cfg.manu_name, OPLUS_CHG_IC_MANU_NAME_MAX - 1, "pps-MTK6895");
+			snprintf(ic_cfg.fw_id, OPLUS_CHG_IC_FW_ID_MAX - 1, "0x00");
+			ic_cfg.get_func = oplus_chg_cp_pps_get_func;
+			ic_cfg.virq_data = oplus_chg_cp_pps_virq_table;
+			ic_cfg.virq_num = ARRAY_SIZE(oplus_chg_cp_pps_virq_table);
+			break;
 		default:
 			chg_err("not support ic_type(=%d)\n", ic_type);
 			continue;
@@ -6513,6 +6660,10 @@ static int oplus_mtk_ic_register(struct device *dev, struct mtk_charger *info)
 		case OPLUS_CHG_IC_GAUGE:
 			info->gauge_ic_dev = ic_dev;
 			break;
+		case OPLUS_CHG_IC_PPS:
+			info->pps_ic = ic_dev;
+			oplus_chg_ic_func(ic_dev, OPLUS_IC_FUNC_INIT);
+			break;
 		default:
 			chg_err("not support ic_type(=%d) ...\n", ic_type);
 			continue;
@@ -6522,6 +6673,336 @@ static int oplus_mtk_ic_register(struct device *dev, struct mtk_charger *info)
 
 	return 0;
 }
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static int oplus_chg_set_pps_config(struct oplus_chg_ic_dev *ic_dev, int vbus_mv, int ibus_ma)
+{
+	int ret = 0;
+	int vbus_mv_t = 0;
+	int ibus_ma_t = 0;
+	struct tcpc_device *tcpc = NULL;
+
+	chg_info("request vbus_mv[%d], ibus_ma[%d]\n", vbus_mv, ibus_ma);
+
+	tcpc = tcpc_dev_get_by_name("type_c_port0");
+	if (tcpc == NULL) {
+		chg_err("get type_c_port0 fail\n");
+		return -EINVAL;
+	}
+
+	ret = tcpm_set_apdo_charging_policy(tcpc, DPM_CHARGING_POLICY_PPS, vbus_mv, ibus_ma, NULL);
+	if (ret == TCP_DPM_RET_REJECT) {
+		chg_err("set_apdo_charging_policy reject\n");
+		return 0;
+	} else if (ret != 0) {
+		chg_err("set_apdo_charging_policy error\n");
+		return MTK_ADAPTER_ERROR;
+	}
+
+	ret = tcpm_dpm_pd_request(tcpc, vbus_mv, ibus_ma, NULL);
+	if (ret != TCPM_SUCCESS) {
+		chg_err("tcpm_dpm_pd_request fail\n");
+		return -EINVAL;
+	}
+
+	ret = tcpm_inquire_pd_contract(tcpc, &vbus_mv_t, &ibus_ma_t);
+	if (ret != TCPM_SUCCESS) {
+		chg_err("inquire current vbus_mv and ibus_ma fail\n");
+		return -EINVAL;
+	}
+
+	chg_info("request vbus_mv[%d], ibus_ma[%d]\n", vbus_mv_t, ibus_ma_t);
+
+	return 0;
+}
+
+static int oplus_pps_get_authen_data(void)
+{
+	int i;
+	int ret;
+	struct tcp_dpm_custom_vdm_data vdm_data;
+	struct tcpc_device *tcpc_dev = tcpc_dev_get_by_name("type_c_port0");
+
+	for (i = 0; i < PPS_RANDOM_NUMBER; i++)
+		get_random_bytes(&pps_random[i], 4);
+
+	vdm_data.cnt = 5;
+	vdm_data.wait_resp = true;
+	vdm_data.vdos[0] = PD_SVDM_HDR(OPLUS_SVID, OPLUS_UVDM_AUTH_CMD);
+	vdm_data.vdos[1] = pps_random[0];
+	vdm_data.vdos[2] = pps_random[1];
+	vdm_data.vdos[3] = pps_random[2];
+	vdm_data.vdos[4] = pps_random[3];
+	ret = tcpm_dpm_send_custom_vdm(tcpc_dev, &vdm_data, NULL);
+	if (ret == TCPM_SUCCESS) {
+		for (i = 0; i < vdm_data.cnt; i++) {
+			if (i >= 1)
+				pps_adapter_result[i-1] = vdm_data.vdos[i];
+		}
+	} else {
+		chg_err("tcpm_dpm_send_custom_vdm fail(%d)\n", ret);
+		return 0;
+	}
+
+	return ret;
+}
+
+static void tea_encrypt(uint32_t *v, uint32_t *k)
+{
+	uint32_t i, temp_l, temp_h; /* set up */
+	uint32_t sum = 0;
+
+	for (i = 0; i < 32; i++) {
+		sum += tea_delta;
+		temp_l = ((v[1] << 4) + k[0]) ^ (v[1] + sum) ^ ((v[1] >> 5) + k[1]);
+		temp_h = ((v[0] << 4) + k[2]) ^ (v[0] + sum) ^ ((v[0] >> 5) + k[3]);
+		v[0] += temp_l;
+		v[1] += temp_h;
+	}
+}
+
+static void tea_encrypt2(uint32_t *v, uint32_t *k)
+{
+	uint32_t i, temp_l, temp_h; /* set up */
+	uint32_t sum = 0;
+
+	for (i = 0; i < 32; i++) {
+		sum += tea_delta;
+		temp_l = ((v[1] << 4) + k[0]) ^ (v[1] + sum) ^ ((v[1] >> 5) + k[1]);
+		temp_h = ((v[0] << 4) + k[2]) ^ (v[0] + sum) ^ ((v[0] >> 5) + k[3]);
+		v[0] += temp_l;
+		v[1] += temp_h;
+	}
+	v[0] = ~v[0];
+	v[1] = ~v[1];
+}
+
+void tea_encrypt_process(uint32_t *key)
+{
+	uint32_t  i;
+	uint32_t  *k = (uint32_t *) key;
+	uint32_t  loop = ((key[3] >> 29) & 0x07) + 1;
+
+	pps_phone_result[0] = pps_random[0];
+	pps_phone_result[1] = pps_random[1];
+	pps_phone_result[2] = pps_random[2];
+	pps_phone_result[3] = pps_random[3];
+
+	pps_phone_result[2] = ~pps_phone_result[2];
+	pps_phone_result[3] = ~pps_phone_result[3];
+	for (i = 0; i < loop; i++) {
+		tea_encrypt(pps_phone_result, k);
+		tea_encrypt2(pps_phone_result + 2, k);
+	}
+	pps_phone_result[2] = ~pps_phone_result[2];
+	pps_phone_result[3] = ~pps_phone_result[3];
+}
+
+void setup_new_key(uint32_t *new_key, uint32_t *key)
+{
+	uint32_t richtek_key1[4] = { 0 };
+	uint32_t richtek_key2[4] = { 0 };
+
+	memcpy(richtek_key1, private_key1, sizeof(uint32_t) * 4);
+	memcpy(richtek_key2, private_key2, sizeof(uint32_t) * 4);
+	memcpy(new_key, key, sizeof(uint32_t) * 4);
+	tea_encrypt(new_key, richtek_key1);
+	tea_encrypt(new_key + 2, richtek_key2);
+}
+
+bool oplus_pps_check_authen_data(void)
+{
+	uint32_t  key[4] = { 0 };
+	uint32_t  new_key[4] = { 0 };
+	int i;
+
+	memcpy(key, publick_key, sizeof(uint32_t) * 4);
+	setup_new_key(new_key, key);
+	tea_encrypt_process(new_key);
+	for (i = 0; i < 4; i++) {
+		if (pps_adapter_result[i] != pps_phone_result[i])
+			return false;
+	}
+
+	return true;
+}
+
+static bool oplus_pps_check_adapter_maxi(void)
+{
+	int ret;
+	int i;
+	struct tcp_dpm_custom_vdm_data vdm_data;
+	struct tcpc_device *tcpc_dev = tcpc_dev_get_by_name("type_c_port0");
+
+	vdm_data.cnt = 2;
+	vdm_data.wait_resp = true;
+	vdm_data.vdos[0] = PD_UVDM_HDR(OPLUS_SVID, OPLUS_UVDM_POWER_CMD);
+	vdm_data.vdos[1] = 0;
+	for (i = 0; i < vdm_data.cnt; i++)
+		chg_info("send uvdm_data1[%d] = 0x%08x\n", i, vdm_data.vdos[i]);
+	ret = tcpm_dpm_send_custom_vdm(tcpc_dev, &vdm_data, NULL);
+	if (ret != TCPM_SUCCESS) {
+		chg_info("tcpm_dpm_send_custom_vdm fail(%d)\n", ret);
+		return false;
+	}
+
+	return true;
+}
+
+static int oplus_pps_enable_extended_maxi(void)
+{
+	int i;
+	int ret;
+	struct tcp_dpm_custom_vdm_data vdm_data;
+	struct tcpc_device *tcpc_dev = tcpc_dev_get_by_name("type_c_port0");
+
+	vdm_data.cnt = 2;
+	vdm_data.wait_resp = true;
+	vdm_data.vdos[0] = PD_UVDM_HDR(OPLUS_SVID, OPLUS_UVDM_EXAPDO_CMD);
+	vdm_data.vdos[1] = 0;
+	for (i = 0; i < vdm_data.cnt; i++)
+		chg_info("send uvdm_data2[%d] = 0x%08x\n", i, vdm_data.vdos[i]);
+
+	ret = tcpm_dpm_send_custom_vdm(tcpc_dev, &vdm_data, NULL);
+	if (ret == TCPM_SUCCESS) {
+		for (i = 0; i < vdm_data.cnt; i++)
+			chg_info("receive uvdm_data2[%d] = 0x%08x\n", i, vdm_data.vdos[i]);
+	} else {
+		chg_info("tcpm_dpm_send_custom_vdm fail(%d)\n", ret);
+		return ret;
+	}
+
+	return ret;
+}
+
+static int oplus_pps_get_authentiate(struct oplus_chg_ic_dev *ic_dev)
+{
+	struct tcpc_device *tcpc = NULL;
+	bool auth;
+
+#define AUTHENTIATE_PASS	1
+#define AUTHENTIATE_FAILED	(-1)
+
+	tcpc = tcpc_dev_get_by_name("type_c_port0");
+	if (tcpc == NULL) {
+		chg_err("get type_c_port0 fail\n");
+		return -EINVAL;
+	}
+
+	if (tcpm_inquire_pd_data_role(tcpc) != TYPEC_HOST)
+		tcpm_dpm_pd_data_swap(tcpc, TYPEC_HOST, NULL);
+
+	oplus_pps_get_authen_data();
+	auth = oplus_pps_check_authen_data();
+	if (auth == false) {
+		chg_err("pps check authen failed\n");
+		if (tcpm_inquire_pd_data_role(tcpc) != TYPEC_DEVICE)
+			tcpm_dpm_pd_data_swap(tcpc, TYPEC_DEVICE, NULL);
+		return AUTHENTIATE_FAILED;
+	}
+
+	if (oplus_pps_check_adapter_maxi())
+		oplus_pps_enable_extended_maxi();
+
+	if (tcpm_inquire_pd_data_role(tcpc) != TYPEC_DEVICE)
+		tcpm_dpm_pd_data_swap(tcpc, TYPEC_DEVICE, NULL);
+
+	return AUTHENTIATE_PASS;
+}
+
+static int oplus_get_pps_info(struct oplus_chg_ic_dev *ic_dev, u32 *pdo, int num)
+{
+	struct tcpc_device *tcpc = NULL;
+	struct tcpm_power_cap cap;
+	int pdo_max = num > PPS_PDO_MAX ? PPS_PDO_MAX : num;
+	int ret, pdo_index;
+
+	tcpc = tcpc_dev_get_by_name("type_c_port0");
+	if (tcpc == NULL) {
+		chg_err("get type_c_port0 fail\n");
+		return -EINVAL;
+	}
+	ret = tcpm_dpm_pd_get_source_cap(tcpc, NULL);
+	if (ret == TCPM_SUCCESS)
+		chg_err("tcpm_dpm_pd_get_source_cap_ext ok(%d)\n", ret);
+	else
+		chg_err("tcpm_dpm_pd_get_source_cap_ext failed(%d)\n", ret);
+
+	ret = tcpm_inquire_pd_source_cap(tcpc, &cap);
+	if (ret != TCPM_SUCCESS)
+		return ret;
+
+	for (pdo_index = 0; pdo_index < pdo_max; pdo_index++)
+		pdo[pdo_index] = cap.pdos[pdo_index];
+
+	return 0;
+}
+
+static int oplus_chg_get_pps_status(struct oplus_chg_ic_dev *ic_dev, u32 *src_info)
+{
+	int tcpm_ret = TCPM_SUCCESS;
+	struct pd_pps_status pps_status;
+	struct tcpc_device *tcpc = NULL;
+
+	tcpc = tcpc_dev_get_by_name("type_c_port0");
+	if (tcpc == NULL) {
+		chg_err("get type_c_port0 fail\n");
+		return -EINVAL;
+	}
+
+	tcpm_ret = tcpm_dpm_pd_get_pps_status(tcpc, NULL, &pps_status);
+	if (tcpm_ret != 0)
+		return tcpm_ret;
+
+	*src_info = (PD_PPS_SET_OUTPUT_MV(pps_status.output_mv) | PD_PPS_SET_OUTPUT_MA(pps_status.output_ma) << 16);
+
+	return 0;
+}
+
+static void init_pps_key(void)
+{
+	int ret = 0;
+	int i = 0;
+	char oplus_pps_offset[64] = { 0 };
+	struct device_node *np = NULL;
+
+	np = of_find_node_by_name(NULL, "oplus_pps");
+	if (np) {
+		for (i = 0; i < PPS_KEY_COUNT; i++) {
+			sprintf(oplus_pps_offset, "Publick_key_%d", i);
+			ret = of_property_read_u32(np, oplus_pps_offset, &(publick_key[i]));
+			if (ret)
+				chg_err(" publick_key[%d]: %s %d fail", i, oplus_pps_offset, publick_key[i]);
+			chg_err(" publick_key[%d]: %s %d", i, oplus_pps_offset, publick_key[i]);
+		}
+
+		for (i = 0; i < PPS_KEY_COUNT; i++) {
+			sprintf(oplus_pps_offset, "private_key1_%d", i);
+			ret = of_property_read_u32(np, oplus_pps_offset, &(private_key1[i]));
+			if (ret)
+				chg_err(" private_key1[%d]: %s %d fail", i, oplus_pps_offset, private_key1[i]);
+			chg_err(" private_key1[%d]: %s %d", i, oplus_pps_offset, private_key1[i]);
+		}
+
+		for (i = 0; i < PPS_KEY_COUNT; i++) {
+			sprintf(oplus_pps_offset, "private_key2_%d", i);
+			ret = of_property_read_u32(np, oplus_pps_offset, &(private_key2[i]));
+			if (ret)
+				chg_err(" private_key2[%d]: %s %d fail", i, oplus_pps_offset, private_key2[i]);
+			chg_err(" private_key2[%d]: %s %d", i, oplus_pps_offset, private_key2[i]);
+		}
+
+		ret = of_property_read_u32(np, "tea_delta", &(tea_delta));
+		if (ret) {
+			chg_err(" tea_delta fail");
+			return;
+		}
+		chg_err(" tea_delta = %d OK!\n", tea_delta);
+	} else {
+		chg_err(" np not found!\n");
+	}
+}
+#endif /* OPLUS_FEATURE_CHG_BASIC */
 
 #ifdef CONFIG_THERMAL
 static int cp_thermal_read_temp(struct thermal_zone_device *tzd,
@@ -6807,6 +7288,8 @@ static int mtk_charger_probe(struct platform_device *pdev)
 
 	if (oplus_mtk_ic_register(&pdev->dev, pinfo) != 0)
 		goto reg_ic_err;
+
+	init_pps_key();
 #ifdef CONFIG_THERMAL
 	rc = register_tz_thermal(pinfo);
 	if (rc)

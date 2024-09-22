@@ -218,6 +218,7 @@ static int parallel_chg_check_balance_bat_status(void);
 #if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_CHG_DRM_PANEL_NOTIFY)
 static void chg_panel_notifier_callback(enum panel_event_notifier_tag tag,
 					struct panel_event_notification *notification, void *client_data);
+static void oplus_chg_panel_notify_reg_work(struct work_struct *work);
 #endif
 int oplus_chg_get_curr_time_ms(unsigned long *time_ms);
 static void oplus_fg_soft_reset_work(struct work_struct *work);
@@ -233,7 +234,6 @@ static struct battery_log_ops battlog_comm_ops;
 static void quick_mode_check(void);
 void oplus_first_enable_adsp_voocphy(void);
 static int oplus_chg_track_upload_chg_cycle_info(struct oplus_chg_chip *chip, char *chg_cycle);
-static int oplus_chg_gauge_update_check(struct oplus_chg_chip *chip, bool ffc_state);
 
 extern int sub_gauge_dbg_tbat;
 extern int gauge_dbg_tbat;
@@ -744,12 +744,12 @@ enum power_supply_property oplus_ac_props[] = {
 
 int oplus_ac_get_property(struct power_supply *psy, enum power_supply_property psp, union power_supply_propval *val)
 {
+	static bool last_ac_online;
 	int ret = 0;
 	struct oplus_chg_chip *chip = g_charger_chip;
 
-	if (!chip) {
+	if (!chip)
 		return -EINVAL;
-	}
 
 	if (chip->charger_exist) {
 		if ((chip->charger_type == POWER_SUPPLY_TYPE_USB_DCP || suspend_charger) ||
@@ -786,14 +786,14 @@ int oplus_ac_get_property(struct power_supply *psy, enum power_supply_property p
 		break;
 	}
 
-	if (chip->ac_online) {
+	if (chip->ac_online || chip->ac_online != last_ac_online) {
 		charger_xlog_printk(CHG_LOG_CRTI, "%d %d %d %d %d %d %d %d %d ac_online:%d\n", chip->charger_type,
 				    oplus_vooc_get_fastchg_started(), oplus_vooc_get_fastchg_to_normal(),
 				    oplus_vooc_get_fastchg_to_warm(), oplus_vooc_get_fastchg_dummy_started(),
 				    oplus_vooc_get_adapter_update_status(), oplus_vooc_get_btb_temp_over(),
 				    chip->mmi_fastchg, chip->charger_exist, chip->ac_online);
 	}
-
+	last_ac_online = chip->ac_online;
 	return ret;
 }
 EXPORT_SYMBOL(oplus_ac_get_property);
@@ -1190,7 +1190,7 @@ int oplus_battery_get_property(struct power_supply *psy, enum power_supply_prope
 		break;
 #ifdef CONFIG_OPLUS_CHARGER_MTK
 	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
-		val->intval = chip->ui_soc * chip->batt_capacity_mah * 1000 / 100;
+		val->intval = chip->batt_rm * 1000;
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		val->intval = 2000;
@@ -1486,7 +1486,7 @@ static ssize_t chg_cycle_write(struct file *file, const char __user *buff,
 		if (oplus_voocphy_get_bidirect_cp_support()) {
 			oplus_voocphy_set_chg_auto_mode(false);
 		}
-		if (!oplus_ufcs_get_ufcs_mos_started()) {
+		if (!oplus_ufcs_get_ufcs_mos_started() && !oplus_pps_get_pps_mos_started() && !oplus_voocphy_get_fastchg_ing()) {
 			g_charger_chip->chg_ops->charger_unsuspend();
 			g_charger_chip->chg_ops->charging_enable();
 		}
@@ -1580,7 +1580,7 @@ static ssize_t chg_cycle_write(struct file *file, const char __user *buff,
 		if (oplus_voocphy_get_bidirect_cp_support()) {
 			oplus_voocphy_set_chg_auto_mode(false);
 		}
-		if (!oplus_ufcs_get_ufcs_mos_started()) {
+		if (!oplus_ufcs_get_ufcs_mos_started() && !oplus_pps_get_pps_mos_started()) {
 			g_charger_chip->chg_ops->charger_unsuspend();
 			g_charger_chip->chg_ops->charging_enable();
 		}
@@ -2807,7 +2807,7 @@ static int init_charger_proc(struct oplus_chg_chip *chip)
 	prEntry_tmp = proc_create_data("force_current_limit", 0664, prEntry_da, &proc_force_current_limit_ops, chip);
 	if (prEntry_tmp == NULL) {
 		ret = -1;
-		chg_debug("Couldn't create proc_force_current_limit_ops entry, %d\n");
+		chg_debug("%s: Couldn't create proc_force_current_limit_ops entry, %d\n", __func__, __LINE__);
 	}
 
 	ret = misc_register(&oplus_chg_device);
@@ -3818,9 +3818,6 @@ int oplus_chg_init(struct oplus_chg_chip *chip)
 {
 	int rc = 0;
 	char *thread_name = "shortc_thread";
-#if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_CHG_DRM_PANEL_NOTIFY)
-	void *cookie = NULL;
-#endif
 
 	struct power_supply *usb_psy;
 	struct power_supply *batt_psy;
@@ -3881,6 +3878,10 @@ int oplus_chg_init(struct oplus_chg_chip *chip)
 	INIT_DELAYED_WORK(&chip->fg_soft_reset_work, oplus_fg_soft_reset_work);
 	INIT_DELAYED_WORK(&chip->parallel_batt_chg_check_work, oplus_parallel_batt_chg_check_work);
 	INIT_DELAYED_WORK(&chip->soc_update_when_resume_work, oplus_chg_soc_update_when_resume_work);
+#if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_CHG_DRM_PANEL_NOTIFY)
+	INIT_DELAYED_WORK(&chip->panel_notify_reg_work, oplus_chg_panel_notify_reg_work);
+	schedule_delayed_work(&chip->panel_notify_reg_work, 0);
+#endif
 	chip->shortc_thread = kthread_create(shortc_thread_main, (void *)chip, thread_name);
 	if (!chip->shortc_thread) {
 		chg_err("Can't create shortc_thread\n");
@@ -3906,34 +3907,6 @@ int oplus_chg_init(struct oplus_chg_chip *chip)
 	if (rc) {
 		pr_err("Unable to register chg_fb_notify: %d\n", rc);
 	}
-
-#if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_CHG_DRM_PANEL_NOTIFY)
-	if (chip->active_panel) {
-		cookie = panel_event_notifier_register(PANEL_EVENT_NOTIFICATION_PRIMARY,
-						       PANEL_EVENT_NOTIFIER_CLIENT_PRIMARY_CHG, chip->active_panel,
-						       &chg_panel_notifier_callback, chip);
-		if (!cookie) {
-			pr_err("Unable to register chg_panel_notifier\n");
-			goto err_check_functionality_failed;
-		} else {
-			pr_err("success register chg_panel_notifier\n");
-			chip->notifier_cookie = cookie;
-		}
-	}
-
-	if (chip->dual_panel_support && chip->active_panel_sec) {
-		cookie = panel_event_notifier_register(PANEL_EVENT_NOTIFICATION_SECONDARY,
-						       PANEL_EVENT_NOTIFIER_CLIENT_SECONDARY_CHG,
-						       chip->active_panel_sec, &chg_panel_notifier_callback, chip);
-		if (!cookie) {
-			pr_err("Unable to register panel_sec chg_panel_notifier\n");
-			goto err_check_functionality_sec_failed;
-		} else {
-			pr_err("success register panel_sec chg_panel_notifier\n");
-			chip->notifier_cookie_sec = cookie;
-		}
-	}
-#endif
 
 #if IS_ENABLED(CONFIG_OPLUS_CHG_TEST_KIT)
 	oplus_chg_test_gpio_info_init(chip);
@@ -3974,18 +3947,6 @@ int oplus_chg_init(struct oplus_chg_chip *chip)
 	charger_xlog_printk(CHG_LOG_CRTI, " end\n");
 	return 0;
 
-#if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_CHG_DRM_PANEL_NOTIFY)
-err_check_functionality_sec_failed:
-	if (chip->dual_panel_support) {
-		if (chip->active_panel_sec && chip->notifier_cookie_sec) {
-			panel_event_notifier_unregister(chip->notifier_cookie_sec);
-		}
-	}
-err_check_functionality_failed:
-	if (chip->active_panel && chip->notifier_cookie) {
-		panel_event_notifier_unregister(chip->notifier_cookie);
-	}
-#endif
 power_psy_reg_failed:
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0))
 	if (chip->ac_psy)
@@ -4024,10 +3985,12 @@ int oplus_chg_parse_svooc_dt(struct oplus_chg_chip *chip)
 	if (rc < 0) {
 		chip->vooc_project = 0;
 	}
-
+	rc = of_property_read_u32(node, "oplus,limit_current_area_vooc_project", &chip->limit_current_area_vooc_project);
+	if (rc < 0)
+		chip->limit_current_area_vooc_project = chip->vooc_project;
 	chip->platform_fg_flag = of_property_read_bool(node, "qcom,platform_fg_flag");
-	chg_err("oplus_parse_svooc_dt, chip->vbatt_num = %d,chip->vooc_project = %d.\n", chip->vbatt_num,
-		chip->vooc_project);
+	chg_info("vbatt_num=%d,vooc_project=%d,limit_current_area_vooc_project=%d\n", chip->vbatt_num,
+		chip->vooc_project, chip->limit_current_area_vooc_project);
 
 	chip->usbtemp_dischg_by_pmic = of_property_read_bool(node, "qcom,usbtemp_dischg_by_pmic");
 	charger_xlog_printk(CHG_LOG_CRTI, "usbtemp_dischg_by_pmic = %d\n", chip->usbtemp_dischg_by_pmic);
@@ -4037,57 +4000,6 @@ int oplus_chg_parse_svooc_dt(struct oplus_chg_chip *chip)
 	return 0;
 }
 EXPORT_SYMBOL(oplus_chg_parse_svooc_dt);
-
-#if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_CHG_DRM_PANEL_NOTIFY)
-static int oplus_chg_check_panel_dt(struct oplus_chg_chip *chip)
-{
-	int i;
-	int count;
-	struct device_node *node = NULL;
-	struct drm_panel *panel = NULL;
-	struct device_node *np = NULL;
-
-	np = of_find_node_by_name(NULL, "oplus,dsi-display-dev");
-	if (!np) {
-		dev_err(chip->dev, "device tree info. missing\n");
-		return -EINVAL;
-	}
-
-	count = of_count_phandle_with_args(np, "oplus,dsi-panel-primary", NULL);
-	if (count <= 0)
-		return 0;
-
-	for (i = 0; i < count; i++) {
-		node = of_parse_phandle(np, "oplus,dsi-panel-primary", i);
-		panel = of_drm_find_panel(node);
-		of_node_put(node);
-		if (!IS_ERR(panel)) {
-			chip->active_panel = panel;
-			dev_err(chip->dev, "find active_panel\n");
-			break;
-		}
-	}
-
-	if (chip->dual_panel_support) {
-		count = of_count_phandle_with_args(np, "oplus,dsi-panel-secondary", NULL);
-		if (count <= 0)
-			return 0;
-
-		for (i = 0; i < count; i++) {
-			node = of_parse_phandle(np, "oplus,dsi-panel-secondary", i);
-			panel = of_drm_find_panel(node);
-			of_node_put(node);
-			if (!IS_ERR(panel)) {
-				chip->active_panel_sec = panel;
-				dev_err(chip->dev, "find active_panel_sec\n");
-				break;
-			}
-		}
-	}
-
-	return PTR_ERR(panel);
-}
-#endif
 
 static bool reserve_soc_by_rus(struct oplus_chg_chip *chip)
 {
@@ -4180,6 +4092,7 @@ static int oplus_chg_power_ge_60w(struct oplus_chg_chip *chip, bool *ge60w)
 	case VOOCPHY_33W:
 	case POWER_BANK_44W:
 	case POWER_BANK_55W:
+	case POWER_BANK_45W:
 		*ge60w = false;
 		break;
 	case DUAL_BATT_65W:
@@ -5631,6 +5544,7 @@ int oplus_chg_parse_charger_dt(struct oplus_chg_chip *chip)
 	chip->recharge_after_full = of_property_read_bool(node, "recharge_after_full");
 	chip->smooth_switch = of_property_read_bool(node, "qcom,smooth_switch");
 	chip->voocphy_support_display_vooc = of_property_read_bool(node, "voocphy_support_display_vooc");
+	chip->gsm_call_on = of_property_read_bool(node, "qcom,gsm_call_on");
 #ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 	if (get_eng_version() == HIGH_TEMP_AGING || oplus_is_ptcrb_version() || get_eng_version() == AGING ||
 	    get_eng_version() == FACTORY) {
@@ -5846,10 +5760,6 @@ int oplus_chg_parse_charger_dt(struct oplus_chg_chip *chip)
 
 	chip->dual_panel_support = of_property_read_bool(node, "qcom,dual_panel_support");
 	charger_xlog_printk(CHG_LOG_CRTI, "dual_panel_support = %d\n", chip->dual_panel_support);
-
-#if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_CHG_DRM_PANEL_NOTIFY)
-	oplus_chg_check_panel_dt(chip);
-#endif
 
 	chip->support_low_soc_unlimit = of_property_read_bool(node, "qcom,support_low_soc_unlimit");
 	rc = of_property_read_u32(node, "qcom,unlimit_soc", &chip->unlimit_soc);
@@ -7342,7 +7252,10 @@ static bool oplus_chg_check_vchg_is_good(struct oplus_chg_chip *chip)
 		return true;
 	}
 	if (oplus_is_pps_charging()) {
-		return true;
+		if (oplus_pps_get_pps_dummy_started() && (oplus_pps_get_adapter_type() == PPS_ADAPTER_THIRD))
+			chip->limits.charger_hv_thr = PPS_3RD_ASK_VOLT_MAX;
+		else
+			return true;
 	}
 	if (oplus_is_ufcs_charging() == true) {
 		return true;
@@ -7571,6 +7484,139 @@ static void chg_panel_notifier_callback(enum panel_event_notifier_tag tag,
 	default:
 		break;
 	}
+}
+#endif
+
+
+#if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_CHG_DRM_PANEL_NOTIFY)
+static int oplus_chg_register_panel_notify(struct oplus_chg_chip *chip)
+{
+	int i;
+	int rc = 0;
+	int count;
+	struct device_node *node = NULL;
+	struct drm_panel *panel = NULL;
+	struct device_node *np = NULL;
+	void *cookie = NULL;
+
+	np = of_find_node_by_name(NULL, "oplus,dsi-display-dev");
+	if (!np) {
+		chg_err("device tree info. missing\n");
+		return 0;
+	}
+
+	count = of_count_phandle_with_args(np, "oplus,dsi-panel-primary", NULL);
+	if (count <= 0) {
+		chg_err("primary panel no found\n");
+		return 0;
+	}
+
+	for (i = 0; i < count; i++) {
+		node = of_parse_phandle(np, "oplus,dsi-panel-primary", i);
+		panel = of_drm_find_panel(node);
+		of_node_put(node);
+		if (!IS_ERR(panel)) {
+			chip->active_panel = panel;
+			rc = 0;
+			chg_err("find active_panel\n");
+			break;
+		} else {
+			rc = PTR_ERR(panel);
+		}
+	}
+
+	if (chip->active_panel) {
+		cookie = panel_event_notifier_register(PANEL_EVENT_NOTIFICATION_PRIMARY,
+						       PANEL_EVENT_NOTIFIER_CLIENT_PRIMARY_CHG, chip->active_panel,
+						       &chg_panel_notifier_callback, chip);
+		if (!cookie) {
+			chg_err("Unable to register chg_panel_notifier\n");
+			return -EINVAL;
+		} else {
+			chg_err("success register chg_panel_notifier\n");
+			chip->notifier_cookie = cookie;
+		}
+	} else {
+		chg_err("can't find active panel, rc=%d\n", rc);
+		if (rc == -EPROBE_DEFER)
+			return rc;
+		else
+			return -ENODEV;
+	}
+
+	if (chip->dual_panel_support) {
+		count = of_count_phandle_with_args(np, "oplus,dsi-panel-secondary", NULL);
+		if (count <= 0) {
+			chg_err("second panel no found\n");
+			return 0;
+		}
+
+		for (i = 0; i < count; i++) {
+			node = of_parse_phandle(np, "oplus,dsi-panel-secondary", i);
+			panel = of_drm_find_panel(node);
+			of_node_put(node);
+			if (!IS_ERR(panel)) {
+				chip->active_panel_sec = panel;
+				rc = 0;
+				chg_err("find active_panel_sec\n");
+				break;
+			} else {
+				rc = PTR_ERR(panel);
+			}
+		}
+
+		if (chip->active_panel_sec) {
+			cookie = panel_event_notifier_register(PANEL_EVENT_NOTIFICATION_SECONDARY,
+								PANEL_EVENT_NOTIFIER_CLIENT_SECONDARY_CHG,
+								chip->active_panel_sec, &chg_panel_notifier_callback, chip);
+			if (!cookie) {
+				chg_err("Unable to register panel_sec chg_panel_notifier\n");
+				return -EINVAL;
+			} else {
+				chg_err("success register panel_sec chg_panel_notifier\n");
+				chip->notifier_cookie_sec = cookie;
+			}
+		} else {
+			chg_err("can't find active panel sec, rc=%d\n", rc);
+			if (rc == -EPROBE_DEFER)
+				return rc;
+			else
+				return -ENODEV;
+		}
+	}
+
+	return rc;
+}
+
+#define PANEL_NOTIFY_REG_RETRY_MAX 100
+#define PANEL_NOTIFY_REG_RETRY_DELAY_MS 100
+static void oplus_chg_panel_notify_reg_work(struct work_struct *work)
+{
+	struct oplus_chg_chip *chip = g_charger_chip;
+	static int retry = 0;
+	int rc;
+
+	if (!chip)
+		return;
+
+	if (retry >= PANEL_NOTIFY_REG_RETRY_MAX) {
+		chg_err("panel_notify_reg retry over count\n");
+		return;
+	}
+
+	rc = oplus_chg_register_panel_notify(chip);
+	if (rc < 0) {
+		if (rc != -EPROBE_DEFER) {
+			chg_err("register panel notify error, rc=%d\n", rc);
+			return;
+		}
+		retry++;
+		chg_err("panel not ready, count=%d\n", retry);
+		schedule_delayed_work(&chip->panel_notify_reg_work,
+							msecs_to_jiffies(PANEL_NOTIFY_REG_RETRY_DELAY_MS));
+		return;
+	}
+	retry = 0;
 }
 #endif
 
@@ -8098,6 +8144,7 @@ void oplus_chg_variables_reset(struct oplus_chg_chip *chip, bool in)
 	chip->smart_charge_user = SMART_CHARGE_USER_OTHER;
 	chip->usbtemp_cool_down = 0;
 	chip->pd_chging = false;
+	chip->pps_to_pd_chging = false;
 	chip->pd_wait_svid = true;
 	chip->vooc_start_fail = false;
 	for (i = 0; i < ARRAY_SIZE(chip->ibat_save); i++)
@@ -8300,6 +8347,7 @@ static void oplus_chg_variables_init(struct oplus_chg_chip *chip)
 	chip->calculate_decimal_time = 0;
 	chip->boot_completed = false;
 	chip->pd_chging = false;
+	chip->pps_to_pd_chging = false;
 	chip->pd_authentication = -ENODATA;
 	chip->pps_force_svooc = false;
 	chip->pd_svooc = false;
@@ -8618,6 +8666,7 @@ void oplus_charger_detect_check(struct oplus_chg_chip *chip)
 					    chip->charger_type, unknow_type_check);
 			if (chip->charger_type == POWER_SUPPLY_TYPE_UNKNOWN) {
 				unknow_type_check++;
+				oplus_gauge_check_bqfs_fw();
 			} else {
 				unknow_type_check = 0;
 			}
@@ -10193,7 +10242,6 @@ static void oplus_chg_battery_update_status(struct oplus_chg_chip *chip)
 static void oplus_chg_get_chargerid_voltage(struct oplus_chg_chip *chip)
 {
 	if (chip->use_audio_switch) {
-		chg_err("use_audio_switch, do nothing\n");
 		return;
 	}
 
@@ -11080,7 +11128,6 @@ static int oplus_chg_allow_skip_ffc(struct oplus_chg_chip *chip) {
 #define DOD0_COUNTS (8 * 60 / 5)
 #define CLEAR_FULL_CNT 4
 #define CLEAR_FULL_VOLT_THD 100
-#define OPLUS_CHG_FFC_INTERVAL_MIN 4
 
 static void oplus_chg_check_status_full(struct oplus_chg_chip *chip)
 {
@@ -11089,7 +11136,6 @@ static void oplus_chg_check_status_full(struct oplus_chg_chip *chip)
 	static int pps_to_ffc_full_count = 0;
 	static int last_recharging_vol = 0;
 	int recharging_vol = 0;
-	static unsigned long ffc_interval_jiffies = 0;
 
 	if (chip->chg_ctrl_by_vooc) {
 		if (oplus_vooc_get_fastchg_ing() == true &&
@@ -11119,7 +11165,6 @@ static void oplus_chg_check_status_full(struct oplus_chg_chip *chip)
 		is_batt_full = 0;
 		fastchg_present_wait_count = 0;
 		pps_to_ffc_full_count = 0;
-		ffc_interval_jiffies = 0;
 	} else {
 		if (((oplus_vooc_get_fastchg_to_normal() == true) || (oplus_vooc_get_fastchg_to_warm() == true) ||
 		     (oplus_pps_get_ffc_started() == true) || (oplus_ufcs_get_ffc_started() == true) ||
@@ -11129,12 +11174,6 @@ static void oplus_chg_check_status_full(struct oplus_chg_chip *chip)
 			chg_err("fastchg_present_wait_count = %d, pps_to_ffc_full_count = %d,chip->batt_volt = %d\n",
 				fastchg_present_wait_count, pps_to_ffc_full_count, chip->batt_volt);
 			is_batt_full = 0;
-			if (time_after(jiffies, ffc_interval_jiffies)) {
-				ffc_interval_jiffies = OPLUS_CHG_FFC_INTERVAL_MIN * HZ;
-				ffc_interval_jiffies += jiffies;
-			} else {
-				return;
-			}
 			fastchg_present_wait_count++;
 
 			if (fastchg_present_wait_count == FULL_DELAY_COUNTS)
@@ -11154,9 +11193,6 @@ static void oplus_chg_check_status_full(struct oplus_chg_chip *chip)
 					chip->charging_state = CHARGING_STATUS_FULL;
 				}
 			}
-
-			if (fastchg_present_wait_count == 2 || pps_to_ffc_full_count == 2)
-				oplus_chg_gauge_update_check(chip, true);
 
 			if (fastchg_present_wait_count == FULL_DELAY_COUNTS &&
 			    chip->chg_ops->get_charging_enable() == false &&
@@ -11191,7 +11227,6 @@ static void oplus_chg_check_status_full(struct oplus_chg_chip *chip)
 			fastchg_present_wait_count = 0;
 			chip->waiting_for_ffc = false;
 			pps_to_ffc_full_count = 0;
-			ffc_interval_jiffies = 0;
 		}
 	}
 	if (oplus_chg_check_ffc_status(chip) == false) {
@@ -11363,47 +11398,13 @@ static void oplus_chg_kpoc_power_off_check(struct oplus_chg_chip *chip)
 #endif
 }
 
-static int oplus_chg_gauge_update_check(struct oplus_chg_chip *chip, bool ffc_state) {
-	static bool update = false;
-	static bool ffc_done = false;
-	static int cur_cnt = 0;
-
-	if (chip->charger_type != POWER_SUPPLY_TYPE_USB_DCP) {
-		ffc_done = false;
-		return -1;
-	}
-	if (chip->led_on == 1)
-		return -1;
-	if ((chip->charging_state != CHARGING_STATUS_FULL && (chip->chg_ops->read_full() != 1) &&
-			ffc_state != true) || (chip->chg_ops->get_charging_enable() != 0)) {
-		update = false;
-		chg_debug("the condition dont meet 1-%d,2-%d,3-%d,4-%d\n", chip->charging_state,
-				chip->chg_ops->read_full(), ffc_state, chip->chg_ops->get_charging_enable());
-		return -1;
-	}
-
-	if (update == false) {
-		if (ffc_state == true) {
-			if (ffc_done == false) {
-				cur_cnt = 2;
-				ffc_done = true;
-			} else {
-				return 0;
-			}
-		}
-		if (cur_cnt == 2) {
-			oplus_gauge_cal_model_check(ffc_state);
-			update = true;
-			cur_cnt = 0;
-			return 1;
-		}
-		cur_cnt++;
-	}
-	return 0;
-}
-
+#define GAUGE_INFO_MAX_SIZE 1024
 static void oplus_chg_print_log(struct oplus_chg_chip *chip)
 {
+	static long update_reg_jiffies;
+	char buf[GAUGE_INFO_MAX_SIZE] = {0};
+	int rc;
+
 	if (chip->vbatt_num == 1) {
 		charger_xlog_printk(CHG_LOG_CRTI,
 			"CHGR[ %d / %d / %d / %d / %d / %d ], "
@@ -11451,6 +11452,27 @@ static void oplus_chg_print_log(struct oplus_chg_chip *chip)
 			oplus_vooc_get_fastchg_started(), oplus_vooc_get_fastchg_ing(), oplus_vooc_get_fastchg_dummy_started(),
 			oplus_vooc_get_fastchg_to_normal(), oplus_vooc_get_fastchg_to_warm(), oplus_vooc_get_fast_chg_type(),
 			oplus_voocphy_get_fastchg_commu_ing());
+	}
+
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
+	if (get_eng_version() != PREVERSION || chip->charger_exist) {
+#else
+	if (chip->charger_exist) {
+#endif
+		update_reg_jiffies = jiffies;
+	} else {
+		if (time_is_before_eq_jiffies(update_reg_jiffies + (unsigned long)(300 * HZ))) {
+			update_reg_jiffies = jiffies;
+			rc = oplus_gauge_get_info(buf, GAUGE_INFO_MAX_SIZE);
+			if (rc == 0 && strlen(buf))
+				printk(KERN_INFO "OPLUS_CHG [main_gauge_reg_info] %s\n", buf);
+			if (oplus_gauge_get_sub_batt_soc() > 0) {
+				memset(buf, 0 , sizeof(buf));
+				rc = oplus_sub_gauge_get_info(buf, GAUGE_INFO_MAX_SIZE);
+				if (rc == 0 && strlen(buf))
+					printk(KERN_INFO "OPLUS_CHG [sub_gauge_reg_info] %s\n", buf);
+			}
+		}
 	}
 
 	if (oplus_chg_get_voocphy_support() == AP_SINGLE_CP_VOOCPHY ||
@@ -11884,11 +11906,18 @@ static void oplus_chg_pd_stage1(struct oplus_chg_chip *chip)
 
 static void oplus_chg_pd_stage2(struct oplus_chg_chip *chip)
 {
+	int retry = 5;
+	int pd_type = PD_INACTIVE;
+
 	if (chip->chg_ops->oplus_chg_get_pd_type() > 0 && chip->pd_chging == true) {
 		if (chip->pd_svooc == false) {
-			msleep(2000);
-			if (chip->chg_ops->oplus_chg_get_pd_type() == PD_PPS_ACTIVE &&
-			    oplus_pps_check_third_pps_support() != 0) {
+			pd_type = chip->chg_ops->oplus_chg_get_pd_type();
+			while (retry > 0 && pd_type != PD_PPS_ACTIVE) {
+				msleep(400);
+				pd_type = chip->chg_ops->oplus_chg_get_pd_type();
+				retry--;
+			}
+			if (pd_type== PD_PPS_ACTIVE && oplus_pps_check_third_pps_support()) {
 				if (oplus_pps_get_chg_status() == PPS_CHECKING) {
 					if (oplus_pps_is_allow_real())
 						oplus_pps_start(PPS_ADAPTER_THIRD);
@@ -11897,8 +11926,18 @@ static void oplus_chg_pd_stage2(struct oplus_chg_chip *chip)
 				} else if (oplus_pps_get_chg_status() == PPS_CHARGE_END) {
 					if (oplus_pps_voter_charging_start()) {
 						oplus_pps_start(PPS_ADAPTER_THIRD);
+					} else if (oplus_pps_switch_to_pd() && !chip->pps_to_pd_chging) {
+							chg_info("try to turn on pd\n");
+							if (chip->cool_down_force_5v == false &&
+							    (chip->limits.tbatt_pdqc_to_5v_thr < 0 ||
+							    (chip->limits.tbatt_pdqc_to_5v_thr > 0 &&
+							    chip->temperature <= chip->limits.tbatt_pdqc_to_5v_thr))) {
+								chip->pps_to_pd_chging = true;
+								chip->chg_ops->oplus_chg_pd_setup();
+								oplus_chg_turn_on_pd(chip);
+							}
 					}
-					chg_err(":pps status:PPS_CHARGE_END \n");
+					chg_err(":pps status:PPS_CHARGE_END\n");
 				}
 			}
 		} else {
@@ -11934,24 +11973,43 @@ static void oplus_chg_pd_stage2(struct oplus_chg_chip *chip)
 					if (oplus_pps_voter_charging_start() && (oplus_pps_check_adapter_ability())) {
 						oplus_pps_start(PPS_ADAPTER_OPLUS_V2);
 					}
-					chg_err(":pps status:PPS_CHARGE_END \n");
+					chg_err(":pps status:PPS_CHARGE_END\n");
 				} else {
 					chg_err("authen_result = %d, chip->pd_svooc == %d,PPS_CHECKING\n",
 						chip->pd_authentication, chip->pd_svooc);
 				}
 			} else {
-				if (chip->chg_ops->oplus_chg_get_pd_type() == PD_PPS_ACTIVE &&
-					oplus_pps_check_third_pps_support() != 0 && third_pps_priority_than_svooc()) {
-					if (oplus_pps_get_chg_status() == PPS_CHECKING) {
-					    if (oplus_pps_is_allow_real())
-							oplus_pps_start(PPS_ADAPTER_THIRD);
-						else
-							oplus_pps_set_pps_dummy_started(true, PPS_ADAPTER_THIRD);
-					} else if (oplus_pps_get_chg_status() == PPS_CHARGE_END) {
-						if (oplus_pps_voter_charging_start()) {
-							oplus_pps_start(PPS_ADAPTER_THIRD);
+				if (oplus_pps_check_third_pps_support() && third_pps_priority_than_svooc()) {
+					pd_type = chip->chg_ops->oplus_chg_get_pd_type();
+					while (retry > 0 && pd_type != PD_PPS_ACTIVE) {
+						msleep(400);
+						pd_type = chip->chg_ops->oplus_chg_get_pd_type();
+						retry--;
+					}
+					if (pd_type == PD_PPS_ACTIVE) {
+						if (oplus_pps_get_chg_status() == PPS_CHECKING) {
+							if (oplus_pps_is_allow_real())
+								oplus_pps_start(PPS_ADAPTER_THIRD);
+							else
+								oplus_pps_set_pps_dummy_started(true, PPS_ADAPTER_THIRD);
+						} else if (oplus_pps_get_chg_status() == PPS_CHARGE_END) {
+							if (oplus_pps_voter_charging_start()) {
+								oplus_pps_start(PPS_ADAPTER_THIRD);
+							} else if (oplus_pps_switch_to_pd() &&
+							    !chip->pps_to_pd_chging) {
+								chg_info("try to turn on pd\n");
+								if (chip->cool_down_force_5v == false &&
+								    (chip->limits.tbatt_pdqc_to_5v_thr < 0 ||
+								    (chip->limits.tbatt_pdqc_to_5v_thr > 0 &&
+								    chip->temperature <=
+									chip->limits.tbatt_pdqc_to_5v_thr))) {
+									chip->pps_to_pd_chging = true;
+									chip->chg_ops->oplus_chg_pd_setup();
+									oplus_chg_turn_on_pd(chip);
+								}
+							}
+							chg_err(":pps status:PPS_CHARGE_END\n");
 						}
-						chg_err(":pps status:PPS_CHARGE_END \n");
 					}
 				} else {
 					chip->pps_force_svooc = true;
@@ -12723,7 +12781,6 @@ static void oplus_chg_update_work(struct work_struct *work)
 	oplus_chg_battery_update_status(chip);
 	oplus_chg_kpoc_power_off_check(chip);
 	oplus_chg_cool_down_match_err_check(chip);
-	oplus_chg_gauge_update_check(chip, false);
 	oplus_chg_other_thing(chip);
 	/* run again after interval */
 	if (timer_pending(&chip->update_work.timer) && !delayed_work_pending(&chip->update_work)) {
@@ -13082,7 +13139,8 @@ int oplus_chg_show_vooc_logo_ornot(void)
 	if (oplus_chg_is_wls_fast_type() == true)
 		return 1;
 
-	if (oplus_voocphy_get_dual_cp_support() == false) {
+	if (oplus_voocphy_get_dual_cp_support() == false ||
+	    (oplus_limit_svooc_current() && (g_charger_chip->limit_current_area_vooc_project == VOOCPHY_33W))) {
 		if (oplus_voocphy_get_bidirect_cp_support() &&
 		    oplus_vooc_get_fast_chg_type() == CHARGER_SUBTYPE_FASTCHG_VOOC) {
 			return 1;
@@ -13120,18 +13178,19 @@ int oplus_chg_show_vooc_logo_ornot(void)
 		   oplus_vooc_get_fastchg_to_warm() == true ||
 		   oplus_vooc_get_fastchg_dummy_started() == true ||
 		   oplus_vooc_get_adapter_update_status() == ADAPTER_FW_NEED_UPDATE) {
-		if ((g_charger_chip->vooc_project == 1 ||
-		     g_charger_chip->vooc_project == 5 ||
-		     g_charger_chip->vooc_project == 13 ||
-		     g_charger_chip->vooc_project == 15 ||
-			 g_charger_chip->vooc_project == DUAL_BATT_65W ||
-			 g_charger_chip->vooc_project == DUAL_BATT_80W ||
-			 g_charger_chip->vooc_project == DUAL_BATT_100W ||
-		     oplus_pps_get_support_type() == PPS_SUPPORT_2CP ||
-		     oplus_pps_get_support_type() == PPS_SUPPORT_3CP) &&
+		if ((g_charger_chip->vooc_project == VOOC ||
+		    g_charger_chip->vooc_project == VOOCPHY_33W ||
+		    g_charger_chip->vooc_project == POWER_BANK_44W ||
+		    g_charger_chip->vooc_project == POWER_BANK_45W ||
+		    g_charger_chip->vooc_project == POWER_BANK_67W ||
+		    g_charger_chip->vooc_project == DUAL_BATT_65W ||
+		    g_charger_chip->vooc_project == DUAL_BATT_80W ||
+		    g_charger_chip->vooc_project == DUAL_BATT_100W ||
+		    oplus_pps_get_support_type() == PPS_SUPPORT_2CP ||
+		    oplus_pps_get_support_type() == PPS_SUPPORT_3CP) &&
 		    g_charger_chip->prop_status == POWER_SUPPLY_STATUS_FULL &&
 		    (g_charger_chip->tbatt_status == BATTERY_STATUS__COLD_TEMP ||
-		     g_charger_chip->tbatt_status == BATTERY_STATUS__WARM_TEMP)) {
+		    g_charger_chip->tbatt_status == BATTERY_STATUS__WARM_TEMP)) {
 			return 1;
 		}
 		if (g_charger_chip->prop_status != POWER_SUPPLY_STATUS_FULL &&
@@ -13668,14 +13727,18 @@ int oplus_chg_get_shell_temp(void)
 		return TEMPERATURE_INVALID;
 	}
 
-	rc = thermal_zone_get_temp(g_charger_chip->shell_themal, &temp_val);
-	if (rc) {
+	/* when g_charger_chip->shell_themal is null, in thermal_zone_get_temp will get null pointer */
+	if (IS_ERR_OR_NULL(g_charger_chip->shell_themal)) {
 		g_charger_chip->shell_themal = thermal_zone_get_zone_by_name("shell_back");
-		rc = thermal_zone_get_temp(g_charger_chip->shell_themal, &temp_val);
-		if (rc) {
-			chg_err("thermal_zone_get_temp get error");
+		if (IS_ERR_OR_NULL(g_charger_chip->shell_themal)) {
+			chg_err("Can't get shell_back\n");
 			return g_charger_chip->shell_temp;
 		}
+	}
+	rc = thermal_zone_get_temp(g_charger_chip->shell_themal, &temp_val);
+	if (rc) {
+		chg_err("thermal_zone_get_temp get error");
+		return g_charger_chip->shell_temp;
 	}
 	g_charger_chip->shell_temp = temp_val / 100;
 	return g_charger_chip->shell_temp;
@@ -13757,7 +13820,7 @@ void oplus_smart_charge_by_shell_temp(struct oplus_chg_chip *chip, int val)
 		return;
 	}
 
-	if (chip->shell_themal) {
+	if (!IS_ERR_OR_NULL(chip->shell_themal)) {
 		rc = thermal_zone_get_temp(chip->shell_themal, &chip->shell_temp);
 		if (rc) {
 			g_charger_chip->shell_themal = thermal_zone_get_zone_by_name("shell_back");
@@ -14308,9 +14371,32 @@ int oplus_is_rf_ftm_mode(void)
 #endif
 #ifdef CONFIG_OPLUS_CHARGER_MTK
 #ifndef CONFIG_DISABLE_OPLUS_FUNCTION
+	struct device_node * of_chosen = NULL;
+	char *bootargs = NULL;
+
+	of_chosen = of_find_node_by_path("/chosen");
+
 	if (boot_mode == META_BOOT || boot_mode == FACTORY_BOOT || boot_mode == ADVMETA_BOOT ||
 	    boot_mode == ATE_FACTORY_BOOT) {
 		chg_debug(" boot_mode:%d, return\n", boot_mode);
+		if (of_chosen) {
+			/* Add for MTK FTM AGING DDR test mode, if FTM AGING mode, enable charging.
+			If Qcom platform want enable this feature, need resubmit issue */
+			bootargs = (char *)of_get_property(of_chosen, "bootargs", NULL);
+			if (!bootargs)
+				chg_err("%s: failed to get bootargs\n", __func__);
+			else {
+				chg_debug("%s: bootargs: %s\n", __func__, bootargs);
+				if (strstr(bootargs, "oplus_ftm_mode=ftmaging")) {
+					chg_debug("%s: ftmaging!\n", __func__);
+					return false;
+				} else {
+					chg_debug("%s: not ftmaging!\n", __func__);
+				}
+			}
+		} else {
+			chg_err("%s: failed to get /chosen \n", __func__);
+		}
 		return true;
 	} else
 #endif
@@ -15677,3 +15763,12 @@ void oplus_test_kit_unregister(void)
 	}
 }
 #endif
+
+bool oplus_chg_get_gsm_call_on(void)
+{
+	if (!g_charger_chip) {
+		return false;
+	} else {
+		return g_charger_chip->gsm_call_on;
+	}
+}
